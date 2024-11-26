@@ -2,8 +2,8 @@
 import { AppContext } from '@/context/app-context';
 import { IEmail } from '@/types';
 import { usePrivy } from '@privy-io/react-auth';
-import { PushNetwork } from '@pushprotocol/node-core';
-import { ENV } from '@pushprotocol/node-core/src/lib/constants';
+import { PushNetwork } from '@pushprotocol/push-chain';
+import { ENV } from '@pushprotocol/push-chain/src/lib/constants';
 import PushMail from 'push-mail';
 
 import { ReactNode, useEffect, useState } from 'react';

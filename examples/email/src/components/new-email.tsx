@@ -5,7 +5,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import PushMail from 'push-mail';
-import { ENV } from '@pushprotocol/node-core/src/lib/constants';
+import { ENV } from '@pushprotocol/push-chain/src/lib/constants';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -25,7 +25,7 @@ import { IEmail } from '@/types';
 import { X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { trimAddress, formatTimestamp } from '@/lib/utils';
-import { PushNetwork } from '@pushprotocol/node-core';
+import { PushNetwork } from '@pushprotocol/push-chain';
 
 interface FileData {
   filename: string;
