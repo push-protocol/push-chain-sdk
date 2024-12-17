@@ -1,6 +1,6 @@
 import { css } from 'styled-components';
 import { Box, Button, Front, Sale, Text } from 'shared-components';
-import { ConnectPushWalletButton } from '@pushprotocol/pushchain-ui-kit';
+import { ConnectPushWalletButton } from '../../../../../../packages/ui-kit';
 import { useGlobalContext } from '../../../context/GlobalContext';
 import { LandingPageBanner } from './LandingPageBanner';
 import { SimulateTxText } from './SimulateTxText';

@@ -19,9 +19,14 @@ import config from '../../config';
 export type WalletContextType = {
   account: string | null;
   connectionStatus: ConnectionStatus;
+  env: ENV;
+  iframeRef: React.MutableRefObject<HTMLIFrameElement | null>;
+  isWalletVisible: boolean;
+  isWalletMinimised: boolean;
   handleConnectToPushWallet: () => void;
   handleNewConnectionRequest: () => void;
   handleSendSignRequestToPushWallet: (data: Uint8Array) => Promise<Uint8Array>;
+  setMinimiseWallet: React.Dispatch<React.SetStateAction<boolean>>;
 };
 
 export type WalletProviderProps = { children: ReactNode; env: ENV };
@@ -36,10 +41,14 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({
 }) => {
   const [account, setAccount] = useState<WalletContextType['account']>(null);
 
+  const [isWalletVisible, setWalletVisibility] = useState(false);
+
+  const [isWalletMinimised, setMinimiseWallet] = useState(false);
+
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>('notConnected');
 
-  const tabRef = useRef<Window | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const signatureResolverRef = useRef<{
     success?: (data: WalletEventRespoonse) => void;
@@ -47,28 +56,32 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({
   } | null>(null);
 
   const handleConnectToPushWallet = () => {
+    setWalletVisibility(true);
     setConnectionStatus('connecting');
 
-    if (!tabRef.current) {
-      const width = 600;
-      const height = 800;
-      const left = screen.width - width - 100;
-      const top = 150;
+    // if (!tabRef.current) {
+    //   const width = 600;
+    //   const height = 800;
+    //   const left = screen.width - width - 100;
+    //   const top = 150;
 
-      const newTab = window.open(
-        `${config.WALLET_URL[env]}/wallet?app=${window.location.origin}`,
-        '_blank',
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
+    //   const newTab = window.open(
+    //     `${config.WALLET_URL[env]}/wallet?app=${window.location.origin}`,
+    //     '_blank',
+    //     `width=${width},height=${height},left=${left},top=${top}`
+    //   );
 
-      tabRef.current = newTab;
-    }
+    //   tabRef.current = newTab;
+    // }
   };
 
   const sendMessageToPushWallet = (message: any) => {
-    if (tabRef.current) {
+    if (iframeRef?.current?.contentWindow) {
       try {
-        tabRef.current.postMessage(message, config.WALLET_URL[env]);
+        iframeRef.current.contentWindow.postMessage(
+          message,
+          config.WALLET_URL[env]
+        );
       } catch (error) {
         console.error('Error sending message to push wallet tab:', error);
       }
@@ -76,6 +89,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({
   };
 
   const handleNewConnectionRequest = () => {
+    setMinimiseWallet(false);
     setConnectionStatus('authenticating');
     sendMessageToPushWallet({
       type: APP_TO_WALLET_ACTION.NEW_CONNECTION_REQUEST,
@@ -106,13 +120,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({
     setAccount(null);
   };
 
-  const handleWalletTabClosed = () => {
-    // TODO: Fix this case
-    setConnectionStatus('notConnected');
-    setAccount(null);
-    tabRef.current = null;
-  };
-
   const handleSendSignRequestToPushWallet = (
     data: Uint8Array
   ): Promise<Uint8Array> => {
@@ -132,6 +139,8 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({
           reject(new Error('Signature request failed'));
         },
       };
+
+      setMinimiseWallet(false);
 
       // Send the sign request to the wallet tab
       sendMessageToPushWallet({
@@ -169,10 +178,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({
             console.log('User loggged out', event.data.data);
             handleUserLogOutEvent();
             break;
-          case WALLET_TO_APP_ACTION.TAB_CLOSED:
-            console.log('User closed the tab', event.data.data);
-            handleWalletTabClosed();
-            break;
           case WALLET_TO_APP_ACTION.ERROR:
             console.log('Error from the child tab', event.data);
             signatureResolverRef?.current?.error?.(event.data.data); // Resolve the promise with the data
@@ -194,9 +199,14 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({
       value={{
         account,
         connectionStatus,
+        env,
+        iframeRef,
+        isWalletVisible,
+        isWalletMinimised,
         handleConnectToPushWallet,
-        handleSendSignRequestToPushWallet,
         handleNewConnectionRequest,
+        handleSendSignRequestToPushWallet,
+        setMinimiseWallet,
       }}
     >
       {children}
