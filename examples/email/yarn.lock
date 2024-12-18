@@ -2186,6 +2186,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@pushprotocol/pushchain-ui-kit@npm:^0.0.8":
+  version: 0.0.8
+  resolution: "@pushprotocol/pushchain-ui-kit@npm:0.0.8"
+  dependencies:
+    tslib: "npm:^2.3.0"
+  checksum: 10/de5794925cbe6fd6fb91651dfe29fc4863ab8f3c6f6a7fea452bec43dcd9de1e6cf7dde16075e9008f9957884135b4ef75ff6e040c6281dab14b2b555ad8b5ef
+  languageName: node
+  linkType: hard
+
 "@radix-ui/number@npm:1.1.0":
   version: 1.1.0
   resolution: "@radix-ui/number@npm:1.1.0"
@@ -6396,6 +6405,7 @@ __metadata:
     "@privy-io/wagmi": "npm:^0.2.12"
     "@pushprotocol/node-core": "npm:^0.0.29"
     "@pushprotocol/push-chain": "npm:^0.1.7"
+    "@pushprotocol/pushchain-ui-kit": "npm:^0.0.8"
     "@radix-ui/react-icons": "npm:^1.3.0"
     "@radix-ui/react-popover": "npm:^1.1.2"
     "@radix-ui/react-scroll-area": "npm:^1.2.0"

@@ -2,6 +2,7 @@ import EmailCard from './email-card';
 import { ScrollArea } from './ui/scroll-area';
 import { useAppContext } from '@/context/app-context';
 import { EMAIL_BOX } from '@/constants';
+import { Box } from 'shared-components';
 
 const EmailList = ({ type }: { type: EMAIL_BOX.INBOX | EMAIL_BOX.SENT }) => {
   const { searchInput, emails } = useAppContext();
@@ -26,11 +27,12 @@ const EmailList = ({ type }: { type: EMAIL_BOX.INBOX | EMAIL_BOX.SENT }) => {
 
   return (
     <ScrollArea className="h-full w-full">
-      <div className="flex flex-col gap-2 p-2">
+      <Box display="flex" flexDirection="column">
         {filteredEmails.map((email, index) => (
           <EmailCard key={index} {...email} />
         ))}
-      </div>
+      </Box>
+      <div className="flex flex-col gap-2"></div>
     </ScrollArea>
   );
 };

@@ -1,13 +1,6 @@
 import React, { useState } from 'react';
 import { useAppContext } from '@/context/app-context';
-import {
-  Card,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from './ui/card';
-import { Button } from './ui/button';
+import { Card, CardFooter } from './ui/card';
 import {
   File,
   FileText,
@@ -16,18 +9,22 @@ import {
   Video,
   Archive,
   Code,
-  Reply,
+  ReplyIcon,
 } from 'lucide-react';
-import { formatTimestamp } from '@/lib/utils';
-import { Badge } from './ui/badge';
+import { formatTimestamp, trimAddress } from '@/lib/utils';
 import { FileAttachment, FileAttachments, IEmail } from '@/types';
+import { Box, Text, Button, Back } from 'shared-components';
+import BlockiesSvg from 'blockies-react-svg';
+import { useNavigate } from 'react-router-dom';
+import { css } from 'styled-components';
 
 interface EmailViewerProps {
   onReply: (email: IEmail) => void;
 }
 
 const EmailViewer: React.FC<EmailViewerProps> = ({ onReply }) => {
-  const { selectedEmail } = useAppContext();
+  const { currTab, selectedEmail, setSelectedEmail } = useAppContext();
+  const navigate = useNavigate();
 
   const handleReply = () => {
     if (selectedEmail) {
@@ -37,10 +34,10 @@ const EmailViewer: React.FC<EmailViewerProps> = ({ onReply }) => {
 
   const formatEmailBody = (body: string) => {
     const lines = body.split('\n');
-    let formattedBody = [];
+    const formattedBody = [];
     let inQuote = false;
 
-    for (let line of lines) {
+    for (const line of lines) {
       if (line.startsWith('On') && line.includes('wrote:')) {
         inQuote = true;
         formattedBody.push(
@@ -65,53 +62,108 @@ const EmailViewer: React.FC<EmailViewerProps> = ({ onReply }) => {
     return formattedBody;
   };
 
+  const handleBack = () => {
+    navigate(`/${currTab}`);
+    setSelectedEmail(null);
+  };
+
   return (
     <>
       {selectedEmail && (
-        <Card className="cursor-pointer w-full h-full flex-1">
-          <CardHeader>
-            <CardTitle className="flex flex-col gap-2">
-              <div className="flex flex-row justify-between items-center">
-                <p className="text-md text-semibold">{selectedEmail.subject}</p>
-                <p className="text-sm font-light">
-                  {formatTimestamp(selectedEmail.timestamp.toString())}
-                </p>
-              </div>
-              <Card className="flex flex-col gap-2 p-2 w-full">
-                <div className="flex flex-col gap-2 text-sm text-muted-foreground">
-                  <span>Sender</span>
-                  <Badge className="mr-1">
-                    {selectedEmail.from.split(':')[2]}
-                  </Badge>
-                </div>
-                <div className="flex flex-col gap-2 text-sm text-muted-foreground">
-                  <span>Recipients</span>
-                  <div className="flex flex-col gap-1">
-                    {selectedEmail.to.map((to) => (
-                      <Badge key={to} className="mr-1">
-                        {to.split(':')[2]}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              </Card>
-            </CardTitle>
-            <CardDescription className="py-2">
+        <Card className="w-full h-fit flex-1 py-6 px-4 md:px-8 gap-6">
+          <Box cursor="pointer" onClick={handleBack}>
+            <Back size={24} />
+          </Box>
+          <Box
+            display="flex"
+            justifyContent="space-between"
+            alignSelf="stretch"
+          >
+            <Box
+              display="flex"
+              flexDirection="column"
+              gap="spacing-xs"
+              width="100%"
+            >
+              <Box
+                display="flex"
+                justifyContent="space-between"
+                alignItems="center"
+                width="100%"
+                css={css`
+                  padding-left: 48px;
+                  @media (max-width: 768px) {
+                    padding-left: 0px;
+                  }
+                `}
+              >
+                <Text variant="h4-semibold">{selectedEmail.subject}</Text>
+                <Box>
+                  <Text variant="bes-semibold">
+                    {formatTimestamp(selectedEmail.timestamp.toString(), true)}
+                  </Text>
+                </Box>
+              </Box>
+              <Box display="flex" gap="spacing-xxs">
+                <Box
+                  width="40px"
+                  height="40px"
+                  borderRadius="radius-round"
+                  overflow="hidden"
+                  alignSelf="center"
+                >
+                  <BlockiesSvg address={selectedEmail.from} />
+                </Box>
+                <Box display="flex" flexDirection="column" gap="spacing-xxxs">
+                  <Text variant="bes-semibold">
+                    {trimAddress(selectedEmail.from)}
+                  </Text>
+                  <Text variant="bes-semibold" color="text-tertiary">
+                    To:{' '}
+                    {selectedEmail.to
+                      .map((address) => trimAddress(address))
+                      .join(', ')}
+                  </Text>
+                </Box>
+              </Box>
+            </Box>
+          </Box>
+          <Box
+            css={css`
+              padding: 0px 48px;
+              @media (max-width: 768px) {
+                padding: 0px;
+              }
+            `}
+          >
+            <Text variant="bs-regular">
               {formatEmailBody(selectedEmail.body)}
-            </CardDescription>
+            </Text>
             {selectedEmail.attachments &&
               selectedEmail.attachments.length > 0 && (
                 <CardFooter>
                   <AttachmentList attachments={selectedEmail.attachments!} />
                 </CardFooter>
               )}
-          </CardHeader>
-          <CardFooter>
-            <Button onClick={handleReply} className="flex items-center gap-2">
-              <Reply className="w-4 h-4" />
+          </Box>
+          <Box
+            gap="spacing-xxs"
+            css={css`
+              padding: 0px 48px;
+              @media (max-width: 768px) {
+                padding: 0px;
+              }
+            `}
+          >
+            <Button
+              onClick={handleReply}
+              variant="outline"
+              size="extraSmall"
+              leadingIcon={<ReplyIcon width={16} height={16} />}
+            >
               Reply
             </Button>
-          </CardFooter>
+          </Box>
         </Card>
       )}
     </>

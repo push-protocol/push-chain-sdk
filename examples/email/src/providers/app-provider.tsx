@@ -13,6 +13,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedEmail, setSelectedEmail] = useState<IEmail | null>(null);
   const [pushNetwork, setPushNetwork] = useState<PushNetwork | null>(null);
   const [pushAccount, setPushAccount] = useState<any>(null);
+  const [currTab, setCurrTab] = useState<'inbox' | 'sent'>('inbox');
   const [emails, setEmails] = useState<{
     sent: IEmail[];
     inbox: IEmail[];
@@ -20,6 +21,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     sent: [],
     inbox: [],
   });
+  const [replyTo, setReplyTo] = useState<IEmail | undefined>(undefined);
 
   const { user } = usePrivy();
 
@@ -36,6 +38,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       pushMail.getByRecipient(address),
     ]);
 
+    console.log(received);
+
     setEmails({
       sent: sent.map((email: any) => ({
         from: email.from,
@@ -44,6 +48,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         timestamp: email.ts,
         body: email.body.content,
         attachments: email.attachments,
+        txHash: email.txHash,
       })),
       inbox: received.map((email: any) => ({
         from: email.from,
@@ -52,6 +57,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         timestamp: email.ts,
         body: email.body.content,
         attachments: email.attachments,
+        txHash: email.txHash,
       })),
     });
   };
@@ -85,6 +91,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setPushAccount,
         emails,
         setEmails,
+        currTab,
+        setCurrTab,
+        replyTo,
+        setReplyTo,
       }}
     >
       {children}

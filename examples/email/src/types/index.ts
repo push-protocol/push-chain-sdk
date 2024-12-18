@@ -6,6 +6,7 @@ interface IEmail {
   body: string;
   type?: string;
   attachments?: FileAttachments;
+  txHash: string;
 }
 interface FileAttachment {
   filename: string;

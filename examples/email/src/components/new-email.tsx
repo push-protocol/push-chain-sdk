@@ -6,26 +6,28 @@ import {
 } from '@/components/ui/popover';
 import PushMail from 'push-mail';
 import { ENV } from '@pushprotocol/push-chain/src/lib/constants';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { useAppContext } from '@/context/app-context';
 import { usePrivy, useSolanaWallets } from '@privy-io/react-auth';
 import { useSignMessage } from 'wagmi';
 import { TokenBNB, TokenETH, TokenPUSH, TokenSOL } from '@web3icons/react';
 import { hexToBytes } from 'viem';
 import { IEmail } from '@/types';
-import { X } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { PaperclipIcon } from 'lucide-react';
 import { trimAddress, formatTimestamp } from '@/lib/utils';
 import { PushNetwork } from '@pushprotocol/push-chain';
+import {
+  Box,
+  Button,
+  SendNotification,
+  Text,
+  TextArea,
+  TextInput,
+} from 'shared-components';
+import { css } from 'styled-components';
+import Select from './ui/select';
+import { Cross1Icon } from '@radix-ui/react-icons';
+import styled from 'styled-components';
+import { FileUpload } from './fileUpload';
 
 interface FileData {
   filename: string;
@@ -55,7 +57,7 @@ const NewEmail: React.FC<NewEmailProps> = ({ replyTo }) => {
   const [fileAttachment, setFileAttachment] = useState<FileData | null>(null);
   const [isOpen, setIsOpen] = useState(false);
 
-  const { pushAccount, pushNetwork, setEmails } = useAppContext();
+  const { pushAccount, pushNetwork, setEmails, setReplyTo } = useAppContext();
   const { signMessageAsync } = useSignMessage();
   const { user } = usePrivy();
   const { wallets } = useSolanaWallets();
@@ -104,27 +106,36 @@ ${email.body
     return 'push';
   };
 
-  const handleInputChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      const { name, value } = e.target;
-      setEmailData((prev) => ({ ...prev, [name]: value }));
+  const handleSubjectChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      setEmailData((prev) => ({ ...prev, subject: e.target.value }));
+    },
+    []
+  );
+
+  const handleMessageChange = useCallback(
+    (e: ChangeEvent<HTMLTextAreaElement>) => {
+      setEmailData((prev) => ({ ...prev, message: e.target.value }));
     },
     []
   );
 
   const handleNewRecipientChange = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
-      setNewRecipient((prev) => ({ ...prev, address: e.target.value }));
+      setNewRecipient((prev) => ({ ...prev, address: e.target.value.trim() }));
     },
     []
   );
 
-  const handleAddRecipient = useCallback(() => {
-    if (newRecipient.address) {
-      setRecipients((prev) => [...prev, newRecipient]);
-      setNewRecipient({ address: '', chain: 'eth' });
-    }
-  }, [newRecipient]);
+  const handleAddRecipient = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter' && newRecipient.address) {
+        setRecipients((prev) => [...prev, newRecipient]);
+        setNewRecipient({ address: '', chain: 'eth' });
+      }
+    },
+    [newRecipient]
+  );
 
   const handleRemoveRecipient = useCallback((index: number) => {
     setRecipients((prev) => prev.filter((_, i) => i !== index));
@@ -207,6 +218,7 @@ ${email.body
                 timestamp: Date.now(),
                 body: message,
                 attachments: fileAttachment ? [fileAttachment] : [],
+                txHash: txHash,
               },
             ],
             inbox: prevEmails.inbox,
@@ -234,95 +246,193 @@ ${email.body
     signMessageAsync,
   ]);
 
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open);
+    if (!open) {
+      console.log('Popover closed');
+      setEmailData({
+        subject: '',
+        message: '',
+      });
+      setRecipients([]);
+      setReplyTo(undefined);
+    }
+  };
+
   return (
-    <div className="absolute bottom-5 right-5">
-      <Popover open={isOpen} onOpenChange={setIsOpen}>
+    <div className="absolute bottom-5 right-5 z-10">
+      <Popover open={isOpen} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
-          <Button className="rounded-full">Compose new Email</Button>
+          <Button
+            size="large"
+            leadingIcon={<SendNotification width={24} height={24} />}
+            css={css`
+              border-radius: var(--radius-md);
+              background: #e21d48 !important;
+            `}
+          >
+            <Text
+              variant="h5-regular"
+              color="text-primary-inverse"
+              css={css`
+                display: block;
+                @media (max-width: 768px) {
+                  display: none;
+                }
+              `}
+            >
+              Compose
+            </Text>
+          </Button>
         </PopoverTrigger>
         <PopoverContent
           align="end"
-          className="flex flex-col gap-2 p-2 min-w-[400px]"
+          className="flex flex-col gap-2 p-0 border-0 bg-white rounded-[12px] translate-y-[60px]"
         >
-          <p>Compose an email</p>
-          <div className="flex flex-col gap-2">
-            <div className="grid grid-cols-2 ">
-              {recipients.map((recipient, index) => (
-                <div key={index} className="flex flex-row gap-2 items-center">
-                  <span>
-                    {recipient.chain === 'eth' ? (
-                      <TokenETH className="w-6 h-6" />
-                    ) : recipient.chain === 'sol' ? (
-                      <TokenSOL className="w-6 h-6" />
-                    ) : recipient.chain === 'bnb' ? (
-                      <TokenBNB className="w-6 h-6" />
-                    ) : (
-                      <TokenPUSH className="w-6 h-6" />
-                    )}
-                  </span>
-                  <Badge className="text-xs">
-                    {trimAddress(recipient.address)}
-                  </Badge>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleRemoveRecipient(index)}
+          <Box
+            display="flex"
+            height="48px"
+            padding="spacing-none spacing-sm"
+            alignItems="center"
+            justifyContent="space-between"
+            backgroundColor="surface-secondary"
+            borderRadius="radius-xs radius-xs radius-none radius-none"
+          >
+            <Text variant="bs-semibold">Compose an Email</Text>
+            <Cross1Icon
+              width={18}
+              height={18}
+              onClick={() => setIsOpen(false)}
+              cursor="pointer"
+            />
+          </Box>
+          <Box
+            display="flex"
+            padding="spacing-sm"
+            flexDirection="column"
+            alignItems="flex-start"
+            gap="spacing-xs"
+            alignSelf="stretch"
+          >
+            <Box
+              display="flex"
+              alignItems="flex-start"
+              gap="spacing-xs"
+              alignSelf="stretch"
+              width="100%"
+            >
+              <Box
+                display="flex"
+                padding="spacing-xs"
+                alignItems="center"
+                gap="spacing-xs"
+                border="border-xmd solid stroke-secondary"
+                borderRadius="radius-xs"
+                width="80%"
+                css={css`
+                  flex-wrap: wrap;
+                `}
+              >
+                <Text
+                  variant="bs-regular"
+                  css={css`
+                    padding: 2px 0;
+                  `}
+                >
+                  To
+                </Text>
+                {recipients.map((recipient, index) => (
+                  <Box
+                    display="flex"
+                    padding="spacing-xxxs spacing-xxs"
+                    gap="spacing-xxs"
+                    borderRadius="radius-xxs"
+                    border="border-sm solid stroke-tertiary"
+                    alignItems="center"
+                    height="100%"
                   >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-row gap-2">
+                    <Text variant="bes-semibold">
+                      {trimAddress(recipient.address)}
+                    </Text>
+                    <Cross1Icon
+                      onClick={() => handleRemoveRecipient(index)}
+                      width={12}
+                      height={12}
+                      cursor="pointer"
+                    />
+                  </Box>
+                ))}
+                <Input
+                  value={newRecipient.address}
+                  onChange={handleNewRecipientChange}
+                  onKeyDown={handleAddRecipient}
+                  className="outline-none focus:outline-none w-[90%]"
+                />
+              </Box>
               <Select
                 value={newRecipient.chain}
-                onValueChange={(value) =>
+                onSelect={(value) =>
                   setNewRecipient((prev) => ({ ...prev, chain: value }))
                 }
-              >
-                <SelectTrigger className="w-[80px]">
-                  <SelectValue placeholder={<TokenETH className="w-6 h-6" />} />
-                </SelectTrigger>
-                <SelectContent className="w-[80px]">
-                  <SelectItem value="eth">
-                    <TokenETH className="w-6 h-6" />
-                  </SelectItem>
-                  <SelectItem value="sol">
-                    <TokenSOL className="w-6 h-6" />
-                  </SelectItem>
-                  <SelectItem value="push">
-                    <TokenPUSH className="w-6 h-6" />
-                  </SelectItem>
-                  <SelectItem value="bnb">
-                    <TokenBNB className="w-6 h-6" />
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                placeholder="Add recipient"
-                value={newRecipient.address}
-                onChange={handleNewRecipientChange}
+                options={[
+                  {
+                    icon: <TokenETH className="w-6 h-6" />,
+                    label: 'Ethereum',
+                    value: 'eth',
+                  },
+                  {
+                    icon: <TokenSOL className="w-6 h-6" />,
+                    label: 'Solana',
+                    value: 'sol',
+                  },
+                  {
+                    icon: <TokenPUSH className="w-6 h-6" />,
+                    label: 'Push',
+                    value: 'push',
+                  },
+                  {
+                    icon: <TokenBNB className="w-6 h-6" />,
+                    label: 'BNB',
+                    value: 'bnb',
+                  },
+                ]}
               />
-              <Button onClick={handleAddRecipient}>Add</Button>
-            </div>
-          </div>
-          <Input
-            name="subject"
-            placeholder="subject"
-            value={emailData.subject}
-            onChange={handleInputChange}
-          />
-          <Textarea
-            name="message"
-            placeholder="message"
-            className="min-h-[400px]"
-            value={emailData.message}
-            onChange={handleInputChange}
-          />
-          <Input type="file" onChange={handleFileUpload} />
-          <Button onClick={sendHandler} disabled={sendingMail}>
-            {sendingMail ? 'Sending' : 'Send'}
-          </Button>
+            </Box>
+            <TextInput
+              placeholder="Subject"
+              value={emailData.subject}
+              onChange={handleSubjectChange}
+              css={css`
+                width: 100%;
+              `}
+            />
+            <TextArea
+              placeholder="Message"
+              value={emailData.message}
+              onChange={handleMessageChange}
+              numberOfLines={10}
+              css={css`
+                width: 100%;
+              `}
+            />
+            <FileUpload id="file-upload" onChange={handleFileUpload}>
+              <Button variant="outline" size="extraSmall">
+                <PaperclipIcon width={16} height={16} />
+                <Text>Choose File</Text>
+              </Button>
+            </FileUpload>
+            <Button
+              onClick={sendHandler}
+              disabled={sendingMail}
+              css={css`
+                width: 100%;
+                border-radius: var(--radius-xs);
+                background: #e21d48 !important;
+              `}
+            >
+              {sendingMail ? 'Sending' : 'Send'}
+            </Button>
+          </Box>
         </PopoverContent>
       </Popover>
     </div>
@@ -330,3 +440,10 @@ ${email.body
 };
 
 export default NewEmail;
+
+const Input = styled.input`
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 18px;
+`;

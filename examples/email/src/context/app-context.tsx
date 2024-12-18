@@ -22,6 +22,10 @@ interface AppContextType {
       inbox: IEmail[];
     }>
   >;
+  currTab: 'inbox' | 'sent';
+  setCurrTab: React.Dispatch<React.SetStateAction<'inbox' | 'sent'>>;
+  replyTo: IEmail | undefined;
+  setReplyTo: React.Dispatch<React.SetStateAction<IEmail | undefined>>;
 }
 
 export const AppContext = createContext<AppContextType | undefined>(undefined);
