@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import React from 'react';
 
 import { IEmail } from '@/types';
 
-import NewEmail from './new-email';
 import EmailViewer from './email-viewer';
+import { useAppContext } from '@/context/app-context';
 
 const EmailLayout: React.FC = () => {
-  const [replyTo, setReplyTo] = useState<IEmail | undefined>(undefined);
+  const { setReplyTo } = useAppContext();
 
   const handleReply = (email: IEmail) => {
     setReplyTo(email);
@@ -15,8 +15,6 @@ const EmailLayout: React.FC = () => {
   return (
     <div className="flex flex-col h-full w-full flex-1 ">
       <EmailViewer onReply={handleReply} />
-
-      <NewEmail replyTo={replyTo} />
     </div>
   );
 };
