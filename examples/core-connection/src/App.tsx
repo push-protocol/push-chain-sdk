@@ -6,10 +6,10 @@ import { useDarkMode } from './common/hooks';
 import { RouterContainer } from './common/components';
 import { GlobalProvider } from './context/GlobalContext';
 import {
-  ENV,
   PushWalletProvider,
   PushWalletIFrame,
-} from '@pushprotocol/pushchain-ui-kit';
+  CONSTANTS,
+} from '../../../packages/ui-kit';
 
 const GlobalStyle = createGlobalStyle`
   :root{
@@ -31,7 +31,7 @@ const App: React.FC = () => {
   return (
     <ThemeProvider theme={isDarkMode ? themeConfig.dark : themeConfig.light}>
       <GlobalStyle />
-      <PushWalletProvider env={ENV.PROD}>
+      <PushWalletProvider env={CONSTANTS.ENV.LOCAL}>
         <GlobalProvider>
           <Router>
             <PushWalletIFrame />

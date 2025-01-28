@@ -7,19 +7,13 @@ import {
   PushMonotone,
   SolanaMonotone,
 } from './common';
-
-/**
- * SUPPORTED ENVIRONEMENTS
- */
-export enum ENV {
-  PROD = 'prod',
-  STAGING = 'staging',
-  DEV = 'dev',
-  LOCAL = 'local',
-}
+import { ENV } from './config';
+import { APP_TO_WALLET_ACTION, WALLET_TO_APP_ACTION } from './wallet';
 
 export const CONSTANTS = {
   ENV: ENV,
+  WALLET_TO_APP_ACTION: WALLET_TO_APP_ACTION,
+  APP_TO_WALLET_ACTION: APP_TO_WALLET_ACTION,
 };
 
 export const CHAIN_LOGO: Record<string, React.FC | React.ComponentType> = {

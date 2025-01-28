@@ -1,7 +1,23 @@
-import { ENV } from '../constants';
-import { Config } from './config.types';
+/**
+ * SUPPORTED ENVIRONEMENTS
+ */
+export enum ENV {
+  PROD = 'prod',
+  STAGING = 'staging',
+  DEV = 'dev',
+  LOCAL = 'local',
+}
 
-const config: Config = {
+export type ConfigType = {
+  WALLET_URL: {
+    [ENV.PROD]: string;
+    [ENV.STAGING]: string;
+    [ENV.DEV]: string;
+    [ENV.LOCAL]: string;
+  };
+};
+
+const config: ConfigType = {
   WALLET_URL: {
     [ENV.PROD]: 'https://wallet.push.org',
     [ENV.STAGING]: 'https://push-protocol.github.io/push-wallet',

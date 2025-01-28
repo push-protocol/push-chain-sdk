@@ -1,9 +1,9 @@
 import { css } from 'styled-components';
 import { Box, Button, Front, Sale, Text } from 'shared-components';
-import { ConnectPushWalletButton } from '@pushprotocol/pushchain-ui-kit';
 import { useGlobalContext } from '../../../context/GlobalContext';
 import { LandingPageBanner } from './LandingPageBanner';
 import { SimulateTxText } from './SimulateTxText';
+import WalletPage from '../../WalletTestPage/WalletPage';
 
 const LandingPageLeftComponent = () => {
   const { pushNetwork, mockTx } = useGlobalContext();
@@ -106,7 +106,7 @@ const LandingPageLeftComponent = () => {
               justifyContent="center"
               width="-webkit-fill-available"
             >
-              <ConnectPushWalletButton />
+              <WalletPage />
             </Box>
           )}
 

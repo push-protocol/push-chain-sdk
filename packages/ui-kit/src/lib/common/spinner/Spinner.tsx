@@ -18,18 +18,18 @@ const Container = styled.div`
   align-items: center;
   justify-content: center;
   animation: ${spin} 1s linear infinite;
-  width: 24px;
-  height: 24px;
-  color:#D548EC;
+  width: 20px;
+  height: 20px;
+  color: #fff;
 `;
 
 // Spinner functional component
 const Spinner = () => {
-    return (
-        <Container>
-            <Ellipse />
-        </Container>
-    );
+  return (
+    <Container>
+      <Ellipse />
+    </Container>
+  );
 };
 
 export default Spinner;

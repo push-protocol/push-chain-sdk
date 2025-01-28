@@ -16,6 +16,8 @@ export const getWalletDataFromAccount = (
 
   const addressComponent = account.split(':');
 
+  console.log('Address component', addressComponent);
+
   // Handle cases where there are exactly three components (chain, chainId, address)
   if (addressComponent.length === 3) {
     return {

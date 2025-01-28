@@ -7,7 +7,7 @@ import { CrossIcon, DashIcon, Spinner } from '../../common';
 const PushWalletIFrame: FC = () => {
   const {
     env,
-    account,
+    universalAddress,
     iframeRef,
     isWalletMinimised,
     isWalletVisible,
@@ -16,6 +16,8 @@ const PushWalletIFrame: FC = () => {
     isIframeLoading,
     setIframeLoading,
   } = usePushWalletContext();
+
+  const account = universalAddress ? universalAddress?.address : null;
 
   return (
     <>

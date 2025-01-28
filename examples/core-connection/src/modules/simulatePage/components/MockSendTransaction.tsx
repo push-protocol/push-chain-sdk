@@ -5,9 +5,12 @@ import { TransactionSnippet } from '../../../common/components';
 import { useGlobalContext } from '../../../context/GlobalContext';
 import { Transaction } from '@pushprotocol/push-chain/src/lib/generated/tx';
 import { centerMaskString } from '../../../helpers';
+import { usePushWalletContext } from '../../../../../../packages/ui-kit/src';
+
 const MockSendTransaction = () => {
-  const { pushNetwork, mockTx, account, handleSendSignRequestToPushWallet } =
-    useGlobalContext();
+  const { pushNetwork, mockTx, account } = useGlobalContext();
+
+  const { handleSendSignRequestToPushWallet } = usePushWalletContext();
 
   const [isSendingTxn, setIsSendingTxn] = useState(false);
   const [txnHash, setTxnHash] = useState<string | null>(null);
