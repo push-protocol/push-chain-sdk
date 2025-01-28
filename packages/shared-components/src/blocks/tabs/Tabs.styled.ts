@@ -38,6 +38,7 @@ export const StyledFillTab = styled(Tab)`
   border-radius: var(--radius-xs);
   transition: background-color 0.3s, color 0.3s;
   border-bottom: none;
+  border: none;
 
   &[data-selected] {
     background-color: var(--components-button-tertiary-background-inverse);
