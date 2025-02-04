@@ -492,14 +492,23 @@ const NewEmail: React.FC<NewEmailProps> = ({ replyTo }) => {
               ))}
             </Box>
             <FileUpload id="file-upload" onChange={handleFileUpload}>
-              <Button
-                disabled={fileAttachment.length === 1}
-                variant="outline"
-                size="extraSmall"
-              >
-                <PaperclipIcon width={16} height={16} />
-                <Text>Choose File</Text>
-              </Button>
+              <label htmlFor="file-upload">
+                <Button
+                  disabled={fileAttachment.length === 1}
+                  variant="outline"
+                  size="extraSmall"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const label = document.querySelector(
+                      `label[for="file-upload"]`
+                    ) as HTMLLabelElement | null;
+                    label?.click();
+                  }}
+                >
+                  <PaperclipIcon width={16} height={16} />
+                  <Text>Choose File</Text>
+                </Button>
+              </label>
             </FileUpload>
             <Button
               onClick={sendHandler}

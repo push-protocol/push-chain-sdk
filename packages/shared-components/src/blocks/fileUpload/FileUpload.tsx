@@ -1,4 +1,4 @@
-import { DragEventHandler, forwardRef, ReactNode, useRef } from 'react';
+import { DragEventHandler, forwardRef, ReactNode } from 'react';
 import styled, { FlattenSimpleInterpolation } from 'styled-components';
 
 export type FileUploadProps = {
@@ -23,29 +23,15 @@ const Container = styled.div<{ css?: FlattenSimpleInterpolation }>`
 
 export const FileUpload = forwardRef<HTMLInputElement, FileUploadProps>(
   ({ disabled, children, onChange, onDrop, id }, ref) => {
-    const inputRef = useRef<HTMLInputElement | null>(null);
-
     const handleDragOver: DragEventHandler<HTMLDivElement> = (e) => {
       e.preventDefault();
     };
 
-    const handleClick = () => {
-      if (inputRef.current && !disabled) {
-        inputRef.current.click();
-      }
-    };
-
     return (
-      <Container
-        ref={ref}
-        onDrop={onDrop}
-        onDragOver={handleDragOver}
-        onClick={handleClick}
-      >
+      <Container ref={ref} onDrop={onDrop} onDragOver={handleDragOver}>
         {children}
         <input
           id={id}
-          ref={inputRef}
           type="file"
           accept="image/*"
           hidden={true}
