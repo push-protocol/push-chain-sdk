@@ -2,6 +2,7 @@
   "name": "@pushprotocol/pushchain-ui-kit",
   "version": "1.0.4",
   "dependencies": {
+    "@metamask/sdk": "^0.32.0",
     "tslib": "^2.3.0"
   },
   "type": "commonjs",

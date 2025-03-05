@@ -3,11 +3,12 @@ import { usePushWalletContext } from './PushWalletProvider';
 import config from '../../config';
 import styled from 'styled-components';
 import { CrossIcon, DashIcon, Spinner } from '../../common';
+import { UniversalAddress } from '../wallet.types';
 
 const PushWalletIFrame: FC = () => {
   const {
     env,
-    account,
+    universalAddress,
     iframeRef,
     isWalletMinimised,
     isWalletVisible,
@@ -20,7 +21,7 @@ const PushWalletIFrame: FC = () => {
   return (
     <>
       {isWalletVisible ? (
-        <FrameContainer isWalletMinimised={isWalletMinimised} account={account}>
+        <FrameContainer isWalletMinimised={isWalletMinimised} universalAddress={universalAddress}>
           {isIframeLoading && (
             <FrameLoadingContainer>
               <CloseButtonContainer
@@ -41,8 +42,8 @@ const PushWalletIFrame: FC = () => {
             isWalletMinimised={isWalletMinimised}
             isIframeLoading={isIframeLoading}
           >
-            <AccountContainer account={account}>
-              {account ? (
+            <AccountContainer universalAddress={universalAddress}>
+              {universalAddress ? (
                 <DashButtonContainer onClick={() => setMinimiseWallet(true)}>
                   <DashIcon />
                 </DashButtonContainer>
@@ -64,8 +65,8 @@ const PushWalletIFrame: FC = () => {
                 border: 'none',
                 width: '-webkit-fill-available',
                 height: '100vh',
-                borderBottomRightRadius: account ? '10px' : '0px',
-                borderBottomLeftRadius: account ? '10px' : '0px',
+                borderBottomRightRadius: universalAddress ? '10px' : '0px',
+                borderBottomLeftRadius: universalAddress ? '10px' : '0px',
               }}
               onLoad={() => setIframeLoading(false)}
             />
@@ -79,7 +80,7 @@ const PushWalletIFrame: FC = () => {
 export { PushWalletIFrame };
 
 const FrameContainer = styled.div<{
-  account: string | null;
+  universalAddress: UniversalAddress | null;
   isWalletMinimised: boolean;
 }>`
   position: fixed;
@@ -89,18 +90,18 @@ const FrameContainer = styled.div<{
   border-radius: 10px;
   z-index: 99;
 
-  width: ${({ account, isWalletMinimised }) =>
-    isWalletMinimised ? '0px' : account ? '450px' : '100%'};
-  height: ${({ account, isWalletMinimised }) =>
-    isWalletMinimised ? '0px' : account ? '710px' : '100%'};
-  right: ${({ account }) => (account ? '24px' : '0')};
-  top: ${({ account }) => (account ? '24px' : '0')};
+  width: ${({ universalAddress, isWalletMinimised }) =>
+    isWalletMinimised ? '0px' : universalAddress ? '450px' : '100%'};
+  height: ${({ universalAddress, isWalletMinimised }) =>
+    isWalletMinimised ? '0px' : universalAddress ? '710px' : '100%'};
+  right: ${({ universalAddress }) => (universalAddress ? '24px' : '0')};
+  top: ${({ universalAddress }) => (universalAddress ? '24px' : '0')};
 
   @media (max-width: 425px) {
-    width: ${({ account, isWalletMinimised }) =>
-      isWalletMinimised ? '0px' : account ? '96%' : '100%'};
-    right: ${({ account }) => (account ? '2%' : '0')};
-    top: ${({ account }) => (account ? '8%' : '0')};
+    width: ${({ universalAddress, isWalletMinimised }) =>
+    isWalletMinimised ? '0px' : universalAddress ? '96%' : '100%'};
+    right: ${({ universalAddress }) => (universalAddress ? '2%' : '0')};
+    top: ${({ universalAddress }) => (universalAddress ? '8%' : '0')};
   }
 `;
 
@@ -162,13 +163,13 @@ const FrameSubContainer = styled.div<{
   flex-direction: column;
 `;
 
-const AccountContainer = styled.div<{ account: string | null }>`
+const AccountContainer = styled.div<{ universalAddress: UniversalAddress | null }>`
   width: -webkit-fill-available;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   padding: var(--spacing-xxs) var(--spacing-xxs);
-  border-top-right-radius: ${({ account }) => (account ? '10px' : '0px')};
-  border-top-left-radius: ${({ account }) => (account ? '10px' : '0px')};
-  background-color: ${({ account }) => (account ? '#e3e3e3' : '#17181B')};
+  border-top-right-radius: ${({ universalAddress }) => (universalAddress ? '10px' : '0px')};
+  border-top-left-radius: ${({ universalAddress }) => (universalAddress ? '10px' : '0px')};
+  background-color: ${({ universalAddress }) => (universalAddress ? '#e3e3e3' : '#17181B')};
 `;
