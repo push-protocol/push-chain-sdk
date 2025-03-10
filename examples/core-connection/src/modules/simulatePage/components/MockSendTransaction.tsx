@@ -1,38 +1,49 @@
 import React, { useState } from 'react';
 import { Alert, Box, Button, Front, Text } from 'shared-components';
 import { css } from 'styled-components';
-import { TransactionSnippet } from '../../../common/components';
 import { useGlobalContext } from '../../../context/GlobalContext';
-import { Transaction } from '@pushprotocol/push-chain/src/lib/generated/tx';
 import { centerMaskString } from '../../../helpers';
+import { CONSTANTS, createUniversalAccount } from '@pushchain/devnet';
+import { TransactionSnippet } from '../../../common/components';
+import { mockTransaction } from '../../../common/constants';
+
 const MockSendTransaction = () => {
-  const { pushNetwork, mockTx, account, handleSendSignRequestToPushWallet } =
-    useGlobalContext();
+  const { pushChain, universalAddress } = useGlobalContext();
 
   const [isSendingTxn, setIsSendingTxn] = useState(false);
   const [txnHash, setTxnHash] = useState<string | null>(null);
   const [txnError, setTxnError] = useState<unknown | null>(null);
 
-  const handleSendTransaction = async (mockTx: Transaction) => {
+  const handleSendTransaction = async () => {
     try {
-      if (pushNetwork && account) {
+      if (pushChain && universalAddress) {
         setIsSendingTxn(true);
-        const txHash = await pushNetwork.tx.send(mockTx, {
-          account,
-          signMessage: async (data: Uint8Array) => {
-            return await handleSendSignRequestToPushWallet(data);
-          },
-        });
+        const { txHash } = await pushChain.tx.send(
+          [
+            createUniversalAccount({
+              address: '0x22B173e0596c6723dD1A95817052D96b97176Dd8',
+            }),
+            createUniversalAccount({
+              chain: CONSTANTS.CHAIN.SOLANA,
+              chainId: CONSTANTS.CHAIN_ID.SOLANA.TESTNET,
+              address: 'ySYrGNLLJSK9hvGGpoxg8TzWfRe8ftBtDSMECtx2eJR',
+            }),
+          ],
+          {
+            category: 'CUSTOM:SAMPLE_TX',
+            data: 'Hello world',
+          }
+        );
 
         setTxnHash(txHash);
         setIsSendingTxn(false);
         setTxnError(null);
       }
     } catch (error) {
+      console.log('Error in sending transaction', error);
       setIsSendingTxn(false);
       setTxnError(error);
       setTxnHash(null);
-      console.log('Error in sending Transaction', error);
     }
   };
 
@@ -83,20 +94,19 @@ const MockSendTransaction = () => {
 
       <TransactionSnippet
         heading="Mock Unsigned Transaction Data"
-        transactionData={mockTx}
+        transactionData={mockTransaction}
       />
+
       <Box width={{ initial: '350px', ml: '300px' }}>
-        {mockTx && (
-          <Button
-            variant="primary"
-            size="large"
-            block
-            disabled={isSendingTxn}
-            onClick={() => handleSendTransaction(mockTx)}
-          >
-            {isSendingTxn ? 'Sending Transaction' : 'Send Transaction'}
-          </Button>
-        )}
+        <Button
+          variant="primary"
+          size="large"
+          block
+          disabled={isSendingTxn}
+          onClick={() => handleSendTransaction()}
+        >
+          {isSendingTxn ? 'Sending Transaction' : 'Send Transaction'}
+        </Button>
       </Box>
       <a href="https://scan.push.org/transactions" target="_blank">
         <Box

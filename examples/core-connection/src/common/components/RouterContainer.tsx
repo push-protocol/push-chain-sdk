@@ -8,14 +8,13 @@ import { APP_ROUTES } from '../constants';
 import { useGlobalContext } from '../../context/GlobalContext';
 
 const RouterContainer = () => {
-  const { account } = useGlobalContext();
+  const { universalAddress } = useGlobalContext();
   const navigate = useNavigate();
   useEffect(() => {
-    console.log('Account in useEffect', account);
-    if (account) {
+    if (universalAddress) {
       navigate(APP_ROUTES.SIMULATE);
     }
-  }, [account]);
+  }, [universalAddress]);
 
   return (
     <Box display="flex" justifyContent="center" minHeight="100vh">

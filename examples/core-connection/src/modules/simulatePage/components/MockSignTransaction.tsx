@@ -3,19 +3,21 @@ import { Alert, Box, Button, TextInput } from 'shared-components';
 import { TransactionSnippet } from '../../../common/components';
 import { toHex } from 'viem';
 import { useGlobalContext } from '../../../context/GlobalContext';
+import { usePushWalletContext } from '../../../../../../packages/ui-kit/src';
 
 const MockSignTransaction = () => {
-  const { pushNetwork, handleSendSignRequestToPushWallet } = useGlobalContext();
+  const { pushChain } = useGlobalContext();
+  const { handleSignMessage } = usePushWalletContext();
   const [textInput, setTextInput] = useState('');
   const [signedData, setSignedData] = useState<Uint8Array | null>(null);
 
   const [signatureError, setSignatureError] = useState<unknown | null>(null);
 
-  const handleSignMessage = async () => {
+  const handleSignMessageRequest = async () => {
     if (!textInput) return;
     try {
-      if (pushNetwork) {
-        const signedData = await handleSendSignRequestToPushWallet(
+      if (pushChain) {
+        const signedData = await handleSignMessage(
           new TextEncoder().encode(textInput)
         );
         setSignedData(signedData);
@@ -71,7 +73,7 @@ const MockSignTransaction = () => {
             setTextInput(e.target.value);
           }}
         />
-        <Button variant="tertiary" onClick={handleSignMessage}>
+        <Button variant="tertiary" onClick={handleSignMessageRequest}>
           Sign Message
         </Button>
       </Box>

@@ -3,11 +3,9 @@ import { useGlobalContext } from '../context/GlobalContext';
 import { Navigate } from 'react-router-dom';
 
 const PrivateRoute = ({ children }: { children: ReactNode }) => {
-  const { account } = useGlobalContext();
+  const { universalAddress } = useGlobalContext();
 
-  console.log('Account in Private route ', account);
-
-  if (account) return <>{children}</>;
+  if (universalAddress) return <>{children}</>;
 
   return <Navigate to={'/'} />;
 };

@@ -9,7 +9,7 @@ import {
   CONSTANTS,
   PushWalletProvider,
   PushWalletIFrame,
-} from '@pushprotocol/pushchain-ui-kit';
+} from '../../../packages/ui-kit';
 
 const GlobalStyle = createGlobalStyle`
   :root{
@@ -19,9 +19,9 @@ const GlobalStyle = createGlobalStyle`
     /* New blocks theme css variables*/
   
     ${(props) => {
-      // @ts-expect-error
-      return getBlocksCSSVariables(props.theme.blocksTheme);
-    }}
+    // @ts-expect-error
+    return getBlocksCSSVariables(props.theme.blocksTheme);
+  }}
   }
 `;
 
@@ -41,7 +41,7 @@ const App: React.FC = () => {
   return (
     <ThemeProvider theme={isDarkMode ? themeConfig.dark : themeConfig.light}>
       <GlobalStyle />
-      <PushWalletProvider env={env[deploymentEnv]}>
+      <PushWalletProvider env={CONSTANTS.ENV.LOCAL}>
         <GlobalProvider>
           <Router>
             <PushWalletIFrame />

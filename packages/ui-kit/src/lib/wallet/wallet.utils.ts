@@ -1,19 +1,10 @@
 export const getWalletDataFromAccount = (
   account: string
 ): {
-  chainId: string | null;
-  chain: string | null;
+  chainId: string;
+  chain: string;
   address: string;
 } => {
-  // // Check if the input is a valid non-empty string
-  // if (!account || typeof account !== 'string') {
-  //   return {
-  //     chain: null,
-  //     chainId: null,
-  //     address: null,
-  //   };
-  // }
-
   const addressComponent = account.split(':');
 
   // Handle cases where there are exactly three components (chain, chainId, address)
@@ -28,15 +19,15 @@ export const getWalletDataFromAccount = (
   else if (addressComponent.length === 2) {
     return {
       chain: addressComponent[0],
-      chainId: null,
+      chainId: '',
       address: addressComponent[1],
     };
   }
   // If the input doesn't match the expected format, return the address only
   else {
     return {
-      chain: null,
-      chainId: null,
+      chain: '',
+      chainId: '',
       address: account,
     };
   }

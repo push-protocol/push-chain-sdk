@@ -11,12 +11,16 @@ export enum WALLET_TO_APP_ACTION {
 
   SIGNATURE = 'signature',
   ERROR = 'error',
+
+  CONNECT_WALLET = 'connectWallet',
 }
 
 export enum APP_TO_WALLET_ACTION {
   NEW_CONNECTION_REQUEST = 'newConnectionRequest',
   SIGN_MESSAGE = 'signMessage',
   LOG_OUT = 'logOut',
+
+  CONNECTION_STATUS = 'connectionStatus',
 }
 
 export type ConnectionStatus =
@@ -25,6 +29,12 @@ export type ConnectionStatus =
   | 'authenticating'
   | 'connected'
   | 'retry';
+
+export type UniversalAddress = {
+  chainId: string;
+  chain: string;
+  address: string;
+};
 
 export type WalletEventRespoonse = {
   signature?: Uint8Array;

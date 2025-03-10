@@ -1,18 +1,19 @@
 import React from 'react';
-import { centerMaskString, getWalletDataFromAccount } from '../wallet.utils';
+import { centerMaskString } from '../wallet.utils';
 import { CHAIN_LOGO } from '../../constants';
 import { usePushWalletContext } from './PushWalletProvider';
 import { PushLogo, PushMonotone } from '../../common';
 import styled from 'styled-components';
+import { UniversalAddress } from '../wallet.types';
 
 type TogglePushWalletButtonProps = {
-  account: string;
+  universalAddress: UniversalAddress;
 };
 const TogglePushWalletButton: React.FC<TogglePushWalletButtonProps> = ({
-  account,
+  universalAddress,
 }) => {
   const { setMinimiseWallet } = usePushWalletContext();
-  const { chainId, address } = getWalletDataFromAccount(account);
+  const { chainId, address } = universalAddress;
 
   function getChainIcon(chainId: string | null) {
     if (!chainId) {
