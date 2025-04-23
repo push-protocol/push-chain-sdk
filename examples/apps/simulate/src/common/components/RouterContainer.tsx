@@ -5,7 +5,7 @@ import { Box } from 'shared-components';
 import SimulatePage from '../../pages/SimulatePage';
 import { PrivateRoute } from '../../pages/PrivateRoute';
 import { APP_ROUTES } from '../constants';
-import { usePushWalletContext } from '@pushprotocol/pushchain-ui-kit';
+import { usePushWalletContext } from '../../../../../../packages/ui-kit';
 
 const RouterContainer = () => {
   const { universalAddress } = usePushWalletContext();

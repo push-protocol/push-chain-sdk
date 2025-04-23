@@ -93,8 +93,8 @@ const FrameContainer = styled.div<{
     isWalletMinimised ? '0px' : universalAddress ? '450px' : '100vw'};
   height: ${({ universalAddress, isWalletMinimised }) =>
     isWalletMinimised ? '0px' : universalAddress ? '675px' : '100vh'};
-  right: ${({ universalAddress }) => (universalAddress ? '0px' : '0')};
-  top: ${({ universalAddress }) => (universalAddress ? '50px' : '0')};
+  right: ${({ universalAddress }) => (universalAddress ? '10px' : '0')};
+  top: ${({ universalAddress }) => (universalAddress ? '60px' : '0')};
 
   @media (max-width: 425px) {
     width: ${({ universalAddress, isWalletMinimised }) =>
@@ -121,7 +121,6 @@ const DashButtonContainer = styled.div`
   height: 20px;
   width: 20px;
   padding:2px;
-  background-color: #ff0000;
 `;
 
 const LoadingTextContainer = styled.div`

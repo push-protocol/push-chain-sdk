@@ -3,10 +3,12 @@ import { CONSTANTS, PushChain, createUniversalSigner } from '@pushchain/devnet';
 import { usePushWalletContext } from '../components/PushWalletProvider';
 import { ENV } from '../../config';
 
-export const usePushChain = () => {
+export const usePushChain = (custom_rpc_url?: string) => {
     const { universalAddress, handleSignMessage, env } = usePushWalletContext();
     const [pushChain, setPushChain] = useState<PushChain | null>(null);
     const [error, setError] = useState<Error | null>(null);
+
+
 
     useEffect(() => {
         const initializePushChain = async () => {
@@ -30,9 +32,8 @@ export const usePushChain = () => {
 
                 const instance = await PushChain.initialize(signer, {
                     network: pushChainNetwork,
+                    ...(custom_rpc_url && { rpcUrl: custom_rpc_url })
                 });
-
-                console.log("Push Chain Initialised", instance);
 
                 setPushChain(instance);
                 setError(null);
@@ -44,7 +45,7 @@ export const usePushChain = () => {
         };
 
         initializePushChain();
-    }, [universalAddress]);
+    }, [universalAddress, custom_rpc_url]);
 
     return {
         pushChain,

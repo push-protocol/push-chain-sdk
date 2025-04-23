@@ -2,15 +2,22 @@ import React, { ReactNode } from 'react';
 import { ConnectPushWalletButton } from './ConnectPushWalletButton';
 import { TogglePushWalletButton } from './TogglePushWalletButton';
 import { UniversalAddress } from '../wallet.types';
+import { usePushWalletContext } from './PushWalletProvider';
 
 type PushUniversalWalletProps = {
-  universalAddress: UniversalAddress | null;
   component?: ReactNode;
   title?: string;
   styling?: React.CSSProperties;
 };
 
-const RenderWallet: React.FC<PushUniversalWalletProps> = ({
+type RenderWalletProps = {
+  universalAddress: UniversalAddress | null;
+  component?: ReactNode;
+  title?: string;
+  styling?: React.CSSProperties;
+}
+
+const RenderWallet: React.FC<RenderWalletProps> = ({
   universalAddress,
   component,
   title = 'Login',
@@ -26,11 +33,12 @@ const RenderWallet: React.FC<PushUniversalWalletProps> = ({
 }
 
 const PushUniversalWallet: React.FC<PushUniversalWalletProps> = ({
-  universalAddress,
   component,
   title = 'Login',
   styling,
 }) => {
+
+  const { universalAddress } = usePushWalletContext();
   return (
     <RenderWallet universalAddress={universalAddress} component={component} title={title} styling={styling} />
   )
