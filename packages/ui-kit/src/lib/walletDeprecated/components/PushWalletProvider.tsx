@@ -15,12 +15,12 @@ import {
 } from '../wallet.types';
 import { CONSTANTS } from '../../constants';
 import config, { ENV } from '../../config';
-import { walletRegistry } from '../../providers/WalletProviderRegistry';
+import { walletRegistry } from '../../providers/walletProviders/WalletProviderRegistry';
 import {
   ChainType,
   IWalletProvider,
   WalletInfo,
-} from '../../providers/types/wallet.types';
+} from '../../types/wallet.types';
 import { getWalletDataFromAccount } from '../wallet.utils';
 import { PushWalletIFrame } from './PushWalletIFrame';
 import { PushWalletToast } from './PushWalletToast';

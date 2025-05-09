@@ -1,4 +1,4 @@
-import { ChainType } from '../types/wallet.types';
+import { ChainType } from '../../../types/wallet.types';
 
 export const chainToNamespace = {
   EVM: 'eip155',

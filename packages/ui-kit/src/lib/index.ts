@@ -1,2 +1,4 @@
 export * from './constants';
-export * from './wallet';
+// export * from './walletDeprecated';
+export * from './providers/PushWalletProvider';
+export * from './types';

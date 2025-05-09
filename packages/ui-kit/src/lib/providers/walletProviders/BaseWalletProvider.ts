@@ -1,5 +1,5 @@
 import { toCAIPFormat } from './helpers/address';
-import { ChainType, IWalletProvider } from './types/wallet.types';
+import { ChainType, IWalletProvider } from '../../types/wallet.types';
 
 export abstract class BaseWalletProvider implements IWalletProvider {
   public readonly name: string;

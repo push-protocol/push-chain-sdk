@@ -1,6 +1,6 @@
 import { MetamaskProvider } from './ethereum/metamask';
 import { PhantomProvider } from './solana/phantom';
-import { ChainType, IWalletProvider } from './types/wallet.types';
+import { ChainType, IWalletProvider } from '../../types/wallet.types';
 
 class WalletProviderRegistry {
   private providers: Map<string, IWalletProvider> = new Map();

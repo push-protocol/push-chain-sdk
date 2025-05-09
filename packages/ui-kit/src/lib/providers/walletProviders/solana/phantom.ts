@@ -1,6 +1,6 @@
 import { getAddress } from 'ethers';
 import { BaseWalletProvider } from '../BaseWalletProvider';
-import { ChainType } from '../types/wallet.types';
+import { ChainType } from '../../../types/wallet.types';
 
 declare global {
   interface Window {

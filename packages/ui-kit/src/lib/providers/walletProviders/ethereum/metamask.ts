@@ -1,6 +1,6 @@
 import { MetaMaskSDK } from '@metamask/sdk';
 import { BaseWalletProvider } from '../BaseWalletProvider';
-import { ChainType } from '../types/wallet.types';
+import { ChainType } from '../../../types/wallet.types';
 import { getAddress } from 'ethers';
 import { HexString } from 'ethers/lib.commonjs/utils/data';
 import * as chains from "viem/chains";
