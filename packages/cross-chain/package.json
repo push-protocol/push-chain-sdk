@@ -2,8 +2,9 @@
   "name": "@pushchain/cross-chain",
   "version": "0.0.1",
   "dependencies": {
-    "@coral-xyz/anchor": "^0.31.1",
-    "@solana/web3.js": "^1.98.0",
+    "@bufbuild/protobuf": "^2.0.0",
+    "@coral-xyz/anchor": "^0.28.0",
+    "@solana/web3.js": "^1.68.0",
     "tslib": "^2.3.0",
     "viem": "2.22.13"
   },

@@ -22,7 +22,7 @@ export interface ReadContractParams {
    * EVM abi
    * SVM idl
    */
-  abi: Abi | Idl;
+  abi: Abi | any;
   /**
    * EVM contract fn name
    * SVM PDA var name
