@@ -5,12 +5,15 @@ import { centerMaskString } from '../../../helpers';
 import { CONSTANTS, createUniversalAccount } from '@pushchain/devnet';
 import { TransactionSnippet } from '../../../common/components';
 import { mockTransaction } from '../../../common/constants';
-import { usePushChain, usePushWalletContext } from '@pushprotocol/pushchain-ui-kit';
+import { usePushChainClient, usePushWalletContext } from '../../../../../../../packages/ui-kit/src';
+// import { usePushChain, usePushWalletContext } from '@pushprotocol/pushchain-ui-kit';
 
 const MockSendTransaction = () => {
 
-  const { pushChain, isLoading, error } = usePushChain()
+  const { pushChain, isLoading, error } = usePushChainClient()
   const { universalAddress } = usePushWalletContext();
+
+  console.log("Error initialising push chain >>", error);
 
   const [isSendingTxn, setIsSendingTxn] = useState(false);
   const [txnHash, setTxnHash] = useState<string | null>(null);

@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Alert, Box, Button, TextInput } from 'shared-components';
 import { TransactionSnippet } from '../../../common/components';
 import { toHex } from 'viem';
-import { usePushChain, usePushWalletContext } from '@pushprotocol/pushchain-ui-kit';
+import { usePushChainClient, usePushWalletContext } from '../../../../../../../packages/ui-kit/src';
+// import { usePushChain, usePushWalletContext } from '@pushprotocol/pushchain-ui-kit';
 
 const MockSignTransaction = () => {
 
-  const { pushChain } = usePushChain();
-
+  const { pushChain } = usePushChainClient();
 
   const { handleSignMessage } = usePushWalletContext();
   const [textInput, setTextInput] = useState('');
