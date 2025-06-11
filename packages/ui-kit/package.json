@@ -5,6 +5,7 @@
     "@metamask/sdk": "^0.32.0",
     "@pushchain/core": "^0.1.1",
     "@pushchain/devnet": "^1.0.13",
+    "@walletconnect/ethereum-provider": "^2.21.2",
     "ethers": "^6.13.5",
     "tslib": "^2.3.0",
     "viem": "^2.23.9"

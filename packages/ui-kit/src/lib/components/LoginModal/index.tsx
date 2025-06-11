@@ -148,10 +148,9 @@ const LoginModal: FC<LoginModalProps> = ({
 
               <MainFrameContainer>
                 <iframe
-                  src={`${WALLET_CONFIG_URL[config.env]}/auth?app=${
-                    window.location.origin
-                  }`}
-                  allow="publickey-credentials-create; publickey-credentials-get; *"
+                  src={`${WALLET_CONFIG_URL[config.env]}/auth?app=${window.location.origin
+                    }`}
+                  allow="publickey-credentials-create; publickey-credentials-get; display-capture; *"
                   ref={iframeRef}
                   style={{
                     border: 'none',
@@ -194,24 +193,24 @@ const FrameContainer = styled.div<{
   background-color: var(--pw-int-bg-primary-color);
   border-radius: ${({ universalAddress }) =>
     universalAddress ? '10px' : 'unset'};
-  z-index: 9999;
+  z-index: 999;
 
   width: ${({ universalAddress, isWalletMinimised, accountMenuVariant }) =>
     isWalletMinimised
       ? '0px'
       : universalAddress
-      ? accountMenuVariant === CONSTANTS.CONNECTED.FULL
-        ? '100%'
-        : '450px'
-      : '100vw'};
+        ? accountMenuVariant === CONSTANTS.CONNECTED.FULL
+          ? '100%'
+          : '450px'
+        : '100vw'};
   height: ${({ universalAddress, isWalletMinimised, accountMenuVariant }) =>
     isWalletMinimised
       ? '0px'
       : universalAddress
-      ? accountMenuVariant === CONSTANTS.CONNECTED.FULL
-        ? '100vw'
-        : '675px'
-      : '100vh'};
+        ? accountMenuVariant === CONSTANTS.CONNECTED.FULL
+          ? '100vw'
+          : '675px'
+        : '100vh'};
   right: ${({ universalAddress, accountMenuVariant }) =>
     universalAddress
       ? accountMenuVariant === CONSTANTS.CONNECTED.FULL
@@ -227,14 +226,14 @@ const FrameContainer = styled.div<{
 
   @media (max-width: 425px) {
     width: ${({ universalAddress, isWalletMinimised }) =>
-      isWalletMinimised ? '0px' : universalAddress ? '96%' : '100%'};
+    isWalletMinimised ? '0px' : universalAddress ? '96%' : '100%'};
     right: ${({ universalAddress }) => (universalAddress ? '2%' : '0')};
     top: ${({ universalAddress, accountMenuVariant }) =>
-      universalAddress
-        ? accountMenuVariant === CONSTANTS.CONNECTED.FULL
-          ? '0'
-          : '8%'
-        : '0'};
+    universalAddress
+      ? accountMenuVariant === CONSTANTS.CONNECTED.FULL
+        ? '0'
+        : '8%'
+      : '0'};
   }
 `;
 
@@ -378,8 +377,8 @@ const TextContainer = styled.div<{
         ? textColor
         : '#17181b'
       : textColor
-      ? textColor
-      : '#F5F6F8'};
+        ? textColor
+        : '#F5F6F8'};
 `;
 
 const Heading = styled.h1`

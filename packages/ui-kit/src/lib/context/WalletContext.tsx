@@ -23,6 +23,7 @@ import { PushWalletToast } from '../components/PushWalletToast';
 import { LoginModal } from '../components/LoginModal';
 import { getWalletContext } from './WalletContextMap';
 import { ThemeOverrides } from '../styles/token';
+import "../styles/globals.css";
 
 export type WalletContextType = {
   universalAddress: UniversalAddress | null;
@@ -82,10 +83,10 @@ export const WalletContextProvider: FC<PushWalletProviderProps> = ({
   const [modalAppData, setModalAppData] = useState<ModalAppDetails | undefined>(
     app
       ? {
-          title: app?.title,
-          logoURL: app?.logoUrl,
-          description: app?.description,
-        }
+        title: app?.title,
+        logoURL: app?.logoUrl,
+        description: app?.description,
+      }
       : undefined
   );
 
@@ -94,10 +95,10 @@ export const WalletContextProvider: FC<PushWalletProviderProps> = ({
   >(
     app
       ? {
-          title: app?.title,
-          logoURL: app?.logoUrl,
-          description: app?.description,
-        }
+        title: app?.title,
+        logoURL: app?.logoUrl,
+        description: app?.description,
+      }
       : undefined
   );
 

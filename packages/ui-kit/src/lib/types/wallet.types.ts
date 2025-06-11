@@ -4,6 +4,7 @@ export enum ChainType {
   BINANCE = "bsc",
   ARBITRUM = "arbitrum",
   AVALANCHE = "avalanche",
+  WALLET_CONNECT = "walletConnect"
 }
 export interface WalletInfo {
   address: string;

@@ -1,0 +1,4 @@
+#w3m-modal {
+    z-index: 9999 !important;
+    position: fixed !important;
+}

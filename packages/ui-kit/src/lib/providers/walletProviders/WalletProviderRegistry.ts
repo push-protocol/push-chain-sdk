@@ -1,6 +1,7 @@
 import { MetamaskProvider } from './ethereum/metamask';
 import { PhantomProvider } from './solana/phantom';
 import { ChainType, IWalletProvider } from '../../types/wallet.types';
+import { WalletConnectProvider } from './ethereum/walletconnect';
 
 class WalletProviderRegistry {
   private providers: Map<string, IWalletProvider> = new Map();
@@ -9,6 +10,7 @@ class WalletProviderRegistry {
   constructor() {
     this.registerProvider(new MetamaskProvider());
     this.registerProvider(new PhantomProvider());
+    this.registerProvider(new WalletConnectProvider());
   }
 
   registerProvider(provider: IWalletProvider): void {
