@@ -170,7 +170,10 @@ export async function convertOriginToExecutor(
   const { vm, chainId } = CHAIN_INFO[chain];
 
   if (isPushChain(chain)) {
-    throw new Error('NMSC address cannot be computed for a Push Chain Address');
+    if (options.status) {
+      return { address: account.address as `0x${string}`, deployed: false };
+    }
+    return { address: account.address as `0x${string}` };
   }
 
   // Determine Push Network from the chain

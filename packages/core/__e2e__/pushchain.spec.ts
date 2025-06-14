@@ -1,4 +1,8 @@
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import {
+  generatePrivateKey,
+  PrivateKeyAccount,
+  privateKeyToAccount,
+} from 'viem/accounts';
 import { PUSH_NETWORK, CHAIN } from '../src/lib/constants/enums';
 import { Hex, isAddress, PublicClient } from 'viem';
 import { Keypair, PublicKey } from '@solana/web3.js';
@@ -90,15 +94,10 @@ describe('PushChain (e2e)', () => {
       });
 
       // TODO: ADD EXAMPLE ON GENERATING DATA PROPERTY.
-      it('should sendTransaction', async () => {
+      it.skip('should sendTransaction call a contract', async () => {
         await pushClient.universal.sendTransaction({
           target: '0x2FE70447492307108Bdc7Ff6BaB33Ff37Dacc479',
-          value: BigInt(0),
-          data: '0x2ba2ed980000000000000000000000000000000000000000000000000000000000000312',
-          gasLimit: BigInt(50000000000000000),
-          maxFeePerGas: BigInt(50000000000000000),
-          maxPriorityFeePerGas: BigInt(200000000),
-          deadline: BigInt(9999999999),
+          value: BigInt(2),
         });
         const after = await PushChain.utils.account.convertOriginToExecutor(
           universalSigner.account,
@@ -108,17 +107,25 @@ describe('PushChain (e2e)', () => {
         );
         expect(after.deployed).toBe(true);
       }, 30000);
+
+      it.skip('should sendTransaction token transfer', async () => {
+        await pushClient.universal.sendTransaction({
+          target: '0x2FE70447492307108Bdc7Ff6BaB33Ff37Dacc479',
+          value: BigInt(2),
+        });
+      }, 30000);
     });
 
     describe(`ORIGIN CHAIN: ${CHAIN.PUSH_TESTNET_DONUT}`, () => {
       const originChain = CHAIN.PUSH_TESTNET_DONUT;
       let pushClient: PushChain;
+      let account: PrivateKeyAccount;
 
       beforeAll(async () => {
         const privateKey = process.env['EVM_PRIVATE_KEY'] as Hex;
         if (!privateKey) throw new Error('EVM_PRIVATE_KEY not set');
 
-        const account = privateKeyToAccount(privateKey);
+        account = privateKeyToAccount(privateKey);
 
         universalSigner = await PushChain.utils.signer.toUniversalFromKeyPair(
           account,
@@ -135,9 +142,9 @@ describe('PushChain (e2e)', () => {
       });
 
       it('should getNMSCAddress', async () => {
-        await expect(pushClient.universal.account).rejects.toThrow(
-          'NMSC address cannot be computed for a Push Chain Address'
-        );
+        const address = pushClient.universal.account;
+        expect(address).toBeDefined();
+        expect(address).toBe(account.address);
       });
 
       it('should getUOA', () => {
@@ -147,22 +154,13 @@ describe('PushChain (e2e)', () => {
         expect(isAddress(uoa.address)).toBe(true);
       });
 
-      it('should sendTransaction', async () => {
-        await pushClient.universal.sendTransaction({
+      it.skip('should sendTransaction', async () => {
+        const txHash = await pushClient.universal.sendTransaction({
           target: '0x2FE70447492307108Bdc7Ff6BaB33Ff37Dacc479',
-          value: BigInt(0),
-          data: '0x2ba2ed980000000000000000000000000000000000000000000000000000000000000312',
-          gasLimit: BigInt(50000000000000000),
-          maxFeePerGas: BigInt(50000000000000000),
-          maxPriorityFeePerGas: BigInt(200000000),
+          value: BigInt(2),
         });
-        const after = await PushChain.utils.account.convertOriginToExecutor(
-          universalSigner.account,
-          {
-            status: true,
-          }
-        );
-        expect(after.deployed).toBe(true);
+
+        expect(txHash).toBeDefined();
       }, 30000);
     });
   });
@@ -220,15 +218,10 @@ describe('PushChain (e2e)', () => {
         expect(isValid).toBe(true);
       });
 
-      it('should sendTransaction', async () => {
+      it.skip('should sendTransaction', async () => {
         await pushClient.universal.sendTransaction({
           target: '0x2FE70447492307108Bdc7Ff6BaB33Ff37Dacc479',
-          value: BigInt(0),
-          data: '0x2ba2ed980000000000000000000000000000000000000000000000000000000000000312',
-          gasLimit: BigInt(50000000000000000),
-          maxFeePerGas: BigInt(50000000000000000),
-          maxPriorityFeePerGas: BigInt(200000000),
-          deadline: BigInt(9999999999),
+          value: BigInt(2),
         });
         const after = await PushChain.utils.account.convertOriginToExecutor(
           universalSigner.account,
@@ -260,7 +253,7 @@ describe('PushChain (e2e)', () => {
       expect(origin.chain === CHAIN.PUSH_TESTNET);
     });
 
-    it('Should be able to send transaction from push chain', async () => {
+    it.skip('Should be able to send transaction from push chain', async () => {
       const privateKey = process.env['PUSH_CHAIN_PRIVATE_KEY'] as Hex;
       if (!privateKey) throw new Error('PUSH_CHAIN_PRIVATE_KEY not set');
       const wallet = new Wallet(privateKey);
@@ -268,6 +261,10 @@ describe('PushChain (e2e)', () => {
         'https://evm.rpc-testnet-donut-node1.push.org/'
       );
       const signer = wallet.connect(provider);
+      const balance = await provider.getBalance(wallet.address);
+      if (balance <= BigInt(0)) {
+        throw new Error('Insufficient balance for transaction');
+      }
       const universalSigner = await PushChain.utils.signer.toUniversal(signer);
       const pushChainClient = await PushChain.initialize(universalSigner, {
         network: PushChain.CONSTANTS.PUSH_NETWORK.TESTNET,

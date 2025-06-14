@@ -138,6 +138,7 @@ export class Orchestrator {
     if (this.printTraces) {
       console.log(`[${this.constructor.name}] Estimating cost of execution`);
     }
+
     const gasEstimate = await this.pushClient.estimateGas({
       to: execute.target,
       data: execute.data,
@@ -152,11 +153,7 @@ export class Orchestrator {
     if (this.printTraces) {
       console.log(`[${this.constructor.name}] Fetching Gas Price`);
     }
-    let gasPrice = await this.pushClient.getGasPrice();
-    // TODO: REMOVE THIS AFTER
-    if (gasPrice === BigInt(0)) {
-      gasPrice = BigInt(163026331);
-    }
+    const gasPrice = await this.pushClient.getGasPrice();
 
     if (this.printTraces) {
       console.log(`[${this.constructor.name}] Gas Price: ${gasPrice}`);
