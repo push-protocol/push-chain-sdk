@@ -23,7 +23,7 @@ import { ethers } from 'ethers';
  */
 export class Utils {
   static account = {
-    /**
+    /*
      * Converts a UniversalAccount into a CAIP-10 style address string.
      *
      * Format: `namespace:chainId:address`
@@ -126,8 +126,7 @@ export class Utils {
         return data;
       } catch (error) {
         throw new Error(
-          `Failed to encode function '${functionName}': ${
-            error instanceof Error ? error.message : 'Unknown error'
+          `Failed to encode function '${functionName}': ${error instanceof Error ? error.message : 'Unknown error'
           }`
         );
       }
@@ -216,8 +215,7 @@ export class Utils {
           throw error;
         }
         throw new Error(
-          `Failed to parse value '${value}': ${
-            error instanceof Error ? error.message : 'Invalid number format'
+          `Failed to parse value '${value}': ${error instanceof Error ? error.message : 'Invalid number format'
           }`
         );
       }
