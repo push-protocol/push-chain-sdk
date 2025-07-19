@@ -43,9 +43,11 @@ import {
 } from '../progress-hook/progress-hook.types';
 import PROGRESS_HOOKS from '../progress-hook/progress-hook';
 import { TxResponse } from '../vm-client/vm-client.types';
+import { OrchestratorCache } from './cache';
 
 export class Orchestrator {
   private pushClient: PushClient;
+  private cache: OrchestratorCache;
 
   constructor(
     private readonly universalSigner: UniversalSigner,
@@ -54,6 +56,7 @@ export class Orchestrator {
     private readonly printTraces = false,
     private progressHook?: (progress: ProgressEvent) => void
   ) {
+    this.cache = new OrchestratorCache();
     let pushChain: CHAIN;
     if (pushNetwork === PUSH_NETWORK.MAINNET) {
       pushChain = CHAIN.PUSH_MAINNET;
@@ -610,6 +613,17 @@ export class Orchestrator {
       return address as `0x${string}`;
     }
 
+    // Try to get UEA address from cache first
+    const cachedUEA = this.cache.getUEAAddress(
+      chain,
+      address,
+      this.pushNetwork,
+      vm
+    );
+    if (cachedUEA !== null) {
+      return cachedUEA as `0x${string}`;
+    }
+
     // 1) Figure out the external‐chain ownerKey bytes
     let ownerKey: `0x${string}`;
     if (CHAIN_INFO[chain].vm === VM.EVM) {
@@ -647,11 +661,16 @@ export class Orchestrator {
     const initCodeHash = keccak256(minimalProxyRuntimeCode);
 
     // Step 4: Predict the address using standard CREATE2 formula
-    return getCreate2Address({
+    const ueaAddress = getCreate2Address({
       from: this.pushClient.pushChainInfo.factoryAddress,
       salt,
       bytecodeHash: initCodeHash,
     });
+
+    // Cache the computed UEA address
+    this.cache.setUEAAddress(chain, address, this.pushNetwork, vm, ueaAddress);
+
+    return ueaAddress;
   }
 
   /**

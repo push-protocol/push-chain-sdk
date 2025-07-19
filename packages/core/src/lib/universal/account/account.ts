@@ -5,6 +5,7 @@ import { UniversalAccount } from '../universal.types';
 import { utils } from '@coral-xyz/anchor';
 import { FACTORY_V1 } from '../../constants/abi';
 import { PushClient } from '../../push-client/push-client';
+import { AccountCache } from '../../orchestrator/cache';
 
 /**
  * Formats a blockchain address based on the virtual machine type of the provided chain.
@@ -125,6 +126,9 @@ export function fromChainAgnostic(caip: string): UniversalAccount {
   };
 }
 
+// Global cache instance for convertOriginToExecutor
+const accountCache = new AccountCache();
+
 /**
  * Determines the Push Network based on the chain type (testnet vs mainnet)
  */
@@ -179,6 +183,30 @@ export async function convertOriginToExecutor(
   // Determine Push Network from the chain
   const pushNetwork = getPushNetworkFromChain(chain);
 
+  // Check cache for computed address
+  const cachedAddress = accountCache.getComputedAddress(
+    chain,
+    address,
+    pushNetwork,
+    vm
+  );
+
+  if (cachedAddress) {
+    if (options.onlyCompute) {
+      // Check cache for deployment status
+      const cachedDeploymentStatus =
+        accountCache.getDeploymentStatus(cachedAddress);
+      if (cachedDeploymentStatus !== null) {
+        return {
+          address: cachedAddress as `0x${string}`,
+          deployed: cachedDeploymentStatus,
+        };
+      }
+    } else {
+      return { address: cachedAddress as `0x${string}` };
+    }
+  }
+
   let pushChain: CHAIN;
   if (pushNetwork === PUSH_NETWORK.MAINNET) {
     pushChain = CHAIN.PUSH_MAINNET;
@@ -221,11 +249,26 @@ export async function convertOriginToExecutor(
     ],
   });
 
+  // Cache the computed address
+  accountCache.setComputedAddress(
+    chain,
+    address,
+    pushNetwork,
+    vm,
+    computedAddress
+  );
+
   const byteCode = await pushClient.publicClient.getCode({
     address: computedAddress,
   });
+
+  const isDeployed = byteCode !== undefined;
+
+  // Cache the deployment status
+  accountCache.setDeploymentStatus(computedAddress, isDeployed);
+
   if (options.onlyCompute) {
-    return { address: computedAddress, deployed: byteCode !== undefined };
+    return { address: computedAddress, deployed: isDeployed };
   }
   return { address: computedAddress };
 }

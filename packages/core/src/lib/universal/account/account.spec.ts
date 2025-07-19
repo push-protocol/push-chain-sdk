@@ -5,6 +5,7 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { toUniversalFromKeypair } from '../signer';
 import { createWalletClient, http } from 'viem';
 import { CHAIN_INFO } from '../../constants/chain';
+import { convertOriginToExecutor } from './account';
 
 const EVM_ADDRESS = '0xeCba9a32A9823f1cb00cdD8344Bf2D1d87a8dd97';
 
@@ -87,6 +88,71 @@ describe('Universal Account Utilities', () => {
         }
       );
       expect(address3.address).toBe(address2.address);
+    });
+  });
+
+  describe('convertOriginToExecutor() - Direct Tests', () => {
+    it('should return same address for Push Chain with onlyCompute=true', async () => {
+      const pushAccount = {
+        chain: CHAIN.PUSH_TESTNET_DONUT,
+        address: '0x1234567890123456789012345678901234567890' as `0x${string}`,
+      };
+
+      const result = await convertOriginToExecutor(pushAccount, {
+        onlyCompute: true,
+      });
+
+      expect(result.address).toBe(pushAccount.address);
+      expect(result.deployed).toBe(false);
+    });
+
+    it('should return address without deployed status for Push Chain with onlyCompute=false', async () => {
+      const pushAccount = {
+        chain: CHAIN.PUSH_TESTNET_DONUT,
+        address: '0x1234567890123456789012345678901234567890' as `0x${string}`,
+      };
+
+      const result = await convertOriginToExecutor(pushAccount, {
+        onlyCompute: false,
+      });
+
+      expect(result.address).toBe(pushAccount.address);
+      expect(result.deployed).toBeUndefined();
+    });
+
+    it('should return address without deployed status for Push Chain with default options', async () => {
+      const pushAccount = {
+        chain: CHAIN.PUSH_TESTNET_DONUT,
+        address: '0x1234567890123456789012345678901234567890' as `0x${string}`,
+      };
+
+      const result = await convertOriginToExecutor(pushAccount);
+
+      expect(result.address).toBe(pushAccount.address);
+      expect(result.deployed).toBe(false);
+    });
+
+    it('should compute and cache address for EVM chain', async () => {
+      const evmAccount = {
+        chain: CHAIN.ETHEREUM_SEPOLIA,
+        address: EVM_ADDRESS,
+      };
+
+      // First call should compute the address
+      const result1 = await convertOriginToExecutor(evmAccount, {
+        onlyCompute: true,
+      });
+
+      expect(result1.address).toMatch(/^0x[a-fA-F0-9]{40}$/);
+      expect(typeof result1.deployed).toBe('boolean');
+
+      // Second call should use cached address
+      const result2 = await convertOriginToExecutor(evmAccount, {
+        onlyCompute: true,
+      });
+
+      expect(result2.address).toBe(result1.address);
+      expect(result2.deployed).toBe(result1.deployed);
     });
   });
 
