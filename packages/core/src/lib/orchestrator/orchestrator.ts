@@ -10,6 +10,7 @@ import {
   getCreate2Address,
   hexToBytes,
 } from 'viem';
+import { PushChain } from '../push-chain/push-chain';
 import { CHAIN, PUSH_NETWORK, VM } from '../constants/enums';
 import {
   UniversalAccount,
@@ -165,6 +166,33 @@ export class Orchestrator {
         );
         verificationData = bytesToHex(signature);
         this.executeProgressHook(PROGRESS_HOOK.SEND_TX_04_02, verificationData);
+        /**
+         * Fee Locking
+         */
+        const fixedPushAmount = PushChain.utils.helpers.parseUnits('0.001', 18); // Lock 0.001 Push tokens
+        const fixedAmountInUSD = this.pushClient.pushToUSDC(fixedPushAmount); // ( USD with 8 decimal points )
+        this.executeProgressHook(PROGRESS_HOOK.SEND_TX_05_01, fixedPushAmount);
+        const feeLockTxHashBytes = await this.lockFee(
+          fixedAmountInUSD,
+          executionHash
+        );
+        feeLockTxHash = bytesToHex(feeLockTxHashBytes);
+        // QUESTION: Do we change verification data?
+        // verificationData = bytesToHex(feeLockTxHashBytes);
+        /**
+         * Waiting for Confirmations
+         */
+        const { vm } = CHAIN_INFO[chain];
+
+        this.executeProgressHook(
+          PROGRESS_HOOK.SEND_TX_05_02,
+          vm === VM.SVM
+            ? utils.bytes.bs58.encode(feeLockTxHashBytes)
+            : feeLockTxHash,
+          CHAIN_INFO[chain].confirmations
+        );
+        await this.waitForLockerFeeConfirmation(feeLockTxHashBytes);
+        this.executeProgressHook(PROGRESS_HOOK.SEND_TX_05_03);
       } else {
         /**
          * Fee Locking
