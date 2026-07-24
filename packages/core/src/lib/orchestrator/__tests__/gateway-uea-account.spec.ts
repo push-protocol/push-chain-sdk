@@ -23,6 +23,7 @@ import {
 // ── UEA manager imports ─────────────────────────────────────────────────────
 import {
   computeUEAOffchain,
+  getUEANonce,
   getUeaNonceForExecution,
   getUeaStatusAndNonce,
 } from '../internals/uea-manager';
@@ -73,6 +74,17 @@ function makeMockCtx(overrides: Partial<OrchestratorContext> = {}): Orchestrator
     ueaVersionCache: undefined,
     ...overrides,
   } as unknown as OrchestratorContext;
+}
+
+function makeNativePushCtx(): OrchestratorContext {
+  return makeMockCtx({
+    universalSigner: {
+      account: {
+        chain: CHAIN.PUSH_TESTNET_DONUT,
+        address: '0xBa8F52487b31d3c212373da7C44bf855DeBf2283',
+      },
+    } as any,
+  });
 }
 
 // ============================================================================
@@ -272,6 +284,19 @@ describe('computeUEAOffchain', () => {
 // ============================================================================
 
 describe('getUeaNonceForExecution', () => {
+  it('should not probe EIP-7702 delegation code for a native Push EOA', async () => {
+    const ctx = makeNativePushCtx();
+    (ctx.pushClient.publicClient.getCode as jest.Mock).mockResolvedValue(
+      '0xef01000106bf2f9b02f32203a83a3bdad79fe8818f3796'
+    );
+
+    const nonce = await getUeaNonceForExecution(ctx);
+
+    expect(nonce).toBe(BigInt(0));
+    expect(ctx.pushClient.publicClient.getCode).not.toHaveBeenCalled();
+    expect(ctx.pushClient.readContract).not.toHaveBeenCalled();
+  });
+
   it('should return 0 when UEA is not deployed (no code)', async () => {
     const ctx = makeMockCtx();
     (ctx.pushClient.publicClient.getCode as jest.Mock).mockResolvedValue(undefined);
@@ -319,6 +344,19 @@ describe('getUeaNonceForExecution', () => {
 // ============================================================================
 
 describe('getUeaStatusAndNonce', () => {
+  it('should classify an EIP-7702 delegated native Push account as an EOA', async () => {
+    const ctx = makeNativePushCtx();
+    (ctx.pushClient.publicClient.getCode as jest.Mock).mockResolvedValue(
+      '0xef01000106bf2f9b02f32203a83a3bdad79fe8818f3796'
+    );
+
+    const result = await getUeaStatusAndNonce(ctx);
+
+    expect(result).toEqual({ deployed: false, nonce: BigInt(0) });
+    expect(ctx.pushClient.publicClient.getCode).not.toHaveBeenCalled();
+    expect(ctx.pushClient.readContract).not.toHaveBeenCalled();
+  });
+
   it('should return deployed=false, nonce=0 when no code exists', async () => {
     const ctx = makeMockCtx();
     (ctx.pushClient.publicClient.getCode as jest.Mock).mockResolvedValue(undefined);
@@ -347,11 +385,39 @@ describe('getUeaStatusAndNonce', () => {
   });
 });
 
+describe('getUEANonce', () => {
+  it('should use no UEA nonce for a native Push EOA', async () => {
+    const ctx = makeNativePushCtx();
+
+    const nonce = await getUEANonce(
+      ctx,
+      ctx.universalSigner.account.address as `0x${string}`
+    );
+
+    expect(nonce).toBe(BigInt(0));
+    expect(ctx.pushClient.readContract).not.toHaveBeenCalled();
+  });
+});
+
 // ============================================================================
 // account-manager.ts — getAccountStatus (caching)
 // ============================================================================
 
 describe('getAccountStatus', () => {
+  it('should skip UEA lifecycle checks for an EIP-7702 native Push EOA', async () => {
+    const ctx = makeNativePushCtx();
+    (ctx.pushClient.publicClient.getCode as jest.Mock).mockResolvedValue(
+      '0xef01000106bf2f9b02f32203a83a3bdad79fe8818f3796'
+    );
+
+    const status = await getAccountStatus(ctx);
+
+    expect(status.uea.deployed).toBe(false);
+    expect(status.uea.requiresUpgrade).toBe(false);
+    expect(ctx.pushClient.publicClient.getCode).not.toHaveBeenCalled();
+    expect(ctx.pushClient.readContract).not.toHaveBeenCalled();
+  });
+
   it('should return cached status on second call', async () => {
     const ctx = makeMockCtx();
     // First call: UEA not deployed

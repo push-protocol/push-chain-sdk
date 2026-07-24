@@ -1361,12 +1361,21 @@ export async function executeCeaToPush(
   // Skip getCode if accountStatusCache already confirmed deployment
   let isUEADeployed: boolean;
   let ueaNonce: bigint;
+  const isNativePushEOAR3 = isPushChain(ctx.universalSigner.account.chain);
   const deployedHintR3 = ctx.accountStatusCache?.uea?.deployed;
-  if (deployedHintR3) {
+  if (isNativePushEOAR3) {
+    // Native Push accounts execute directly as EOAs. EIP-7702 delegation code
+    // is not a UEA proxy and its executor does not expose the UEA nonce ABI.
+    // Treat the execution account as ready while using no UEA nonce.
+    isUEADeployed = true;
+    ueaNonce = BigInt(0);
+  } else if (deployedHintR3) {
     isUEADeployed = true;
     ueaNonce = await getUEANonce(ctx, ueaAddress);
   } else {
-    const ueaCode = await ctx.pushClient.publicClient.getCode({ address: ueaAddress });
+    const ueaCode = await ctx.pushClient.publicClient.getCode({
+      address: ueaAddress,
+    });
     isUEADeployed = ueaCode !== undefined;
     ueaNonce = isUEADeployed ? await getUEANonce(ctx, ueaAddress) : BigInt(0);
   }
@@ -1756,12 +1765,23 @@ export async function executeCeaToPushSvm(
   // the Push-side execute() below consumes one UEA nonce before the Solana
   // round-trip payload returns.
   const gatewayPcAddress = getUniversalGatewayPCAddress();
-  const [ueaCode, ueaBalance] = await Promise.all([
-    ctx.pushClient.publicClient.getCode({ address: ueaAddress }),
-    ctx.pushClient.getBalance(ueaAddress),
-  ]);
-  const isUEADeployed = ueaCode !== undefined;
-  const ueaNonce = isUEADeployed ? await getUEANonce(ctx, ueaAddress) : BigInt(0);
+  const isNativePushEOAR3Svm = isPushChain(ctx.universalSigner.account.chain);
+  let isUEADeployed: boolean;
+  let ueaNonce: bigint;
+  let ueaBalance: bigint;
+  if (isNativePushEOAR3Svm) {
+    isUEADeployed = true;
+    ueaNonce = BigInt(0);
+    ueaBalance = await ctx.pushClient.getBalance(ueaAddress);
+  } else {
+    const [ueaCode, balance] = await Promise.all([
+      ctx.pushClient.publicClient.getCode({ address: ueaAddress }),
+      ctx.pushClient.getBalance(ueaAddress),
+    ]);
+    isUEADeployed = ueaCode !== undefined;
+    ueaNonce = isUEADeployed ? await getUEANonce(ctx, ueaAddress) : BigInt(0);
+    ueaBalance = balance;
+  }
 
   const svmPayload = encodeSvmCeaToUeaPayload({
     gatewayProgramHex,
@@ -2269,9 +2289,10 @@ export async function buildPayloadForRoute(
         amount = params.value;
       }
 
-      // Fetch UEA nonce for inbound UniversalPayload
-      const ueaCodeHop = await ctx.pushClient.publicClient.getCode({ address: ueaAddress });
-      const ueaNonceHop = ueaCodeHop !== undefined ? await getUEANonce(ctx, ueaAddress) : BigInt(0);
+      // prepareTransaction already resolved the correct nonce semantics. For a
+      // native Push EOA this is zero; for an external-origin account it is the
+      // current UEA nonce. Do not reclassify EIP-7702 code as a deployed UEA.
+      const ueaNonceHop = nonce;
 
       // Build Push Chain payload (what executes after inbound arrives)
       // Wrap in UniversalPayload struct for the relay.
