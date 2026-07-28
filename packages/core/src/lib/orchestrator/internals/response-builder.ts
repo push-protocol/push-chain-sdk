@@ -846,6 +846,50 @@ export async function transformToUniversalTxResponse(
       // If outbound route, poll for external chain details
       const route = universalTxResponse.route as TransactionRoute | undefined;
       const routeInfo = route ? getRouteInfo(route) : undefined;
+
+      // A reverted Push-chain root transaction can never produce an outbound
+      // leg. Previously we still entered waitForOutboundTx() here, which made
+      // a known failure look like an in-progress relay until the outbound
+      // timeout elapsed. Stop at the root receipt instead and emit the
+      // route-terminal failure immediately. `externalStatus` intentionally
+      // remains unset: no external transaction was submitted, so the failure
+      // is represented by the canonical receipt `status === 0`.
+      if (baseReceipt.status === 0) {
+        const errMsg =
+          `Push Chain transaction ${universalTxResponse.hash} reverted; ` +
+          'outbound relay was not started';
+
+        if (routeInfo?.isOutbound) {
+          const targetChain = (universalTxResponse.chain ??
+            'external') as string;
+          const emit = (event: ProgressEvent) => {
+            if (!event.id) return;
+            fanOut(event, registeredProgressHook, ctx.progressHook);
+          };
+
+          if (route === TransactionRoute.CEA_TO_PUSH) {
+            emit(
+              PROGRESS_HOOKS[PROGRESS_HOOK.SEND_TX_399_02](
+                errMsg,
+                'push',
+                targetChain,
+                undefined,
+                universalTxResponse.hash
+              )
+            );
+          } else {
+            emit(
+              pickWaitHooks(route).failed(targetChain, errMsg, {
+                pushTxHash: universalTxResponse.hash,
+              })
+            );
+          }
+        }
+
+        callbacks.printLog(`[wait] ${errMsg}`);
+        return baseReceipt;
+      }
+
       if (routeInfo?.isOutbound) {
         // Pick route-specific hook builders. R4 (CEA_TO_CEA) currently has
         // no spec'd IDs — pickWaitHooks returns a no-op set that yields
