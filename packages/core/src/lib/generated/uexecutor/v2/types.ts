@@ -66,6 +66,13 @@ export interface OutboundObservation {
   errorMsg: string;
   /** Field 5 — actual gas fee consumed on destination chain (proto types.proto:143). */
   gasFeeUsed: string;
+  /**
+   * Field 6 — PC20 only: wrapper address deployed on the destination chain,
+   * observed at settlement. Empty on a repeat export, where no new wrapper is
+   * deployed and therefore none is observed — see the tracking fallback in
+   * outbound-sync.ts, which resolves it from UniversalCore instead.
+   */
+  pc20WrapperAddress: string;
 }
 
 /**
@@ -107,6 +114,19 @@ export interface OutboundTxV2 {
   gasToken: string;
   /** Field 21 — Human-readable reason why the outbound was aborted. */
   abortReason: string;
+  /**
+   * Field 22 — true when this outbound is a PC20 export (lock the Push-native
+   * token, mint a wrapper on the destination). Routes settlement and revert to
+   * the PC20 path.
+   */
+  isPc20: boolean;
+  /**
+   * Field 23 — PC20 only: the Push-native PC20 contract address, i.e. the
+   * locked source asset. This is the reliable PC20 identifier;
+   * `externalAssetAddr` is empty when the outbound is first created and is only
+   * backfilled once the destination wrapper is observed.
+   */
+  pc20ContractAddress: string;
 }
 
 /**
@@ -179,6 +199,7 @@ function createBaseOutboundObservation(): OutboundObservation {
     txHash: '',
     errorMsg: '',
     gasFeeUsed: '',
+    pc20WrapperAddress: '',
   };
 }
 
@@ -193,6 +214,8 @@ export const OutboundObservation: MessageFns<OutboundObservation> = {
     if (message.errorMsg !== '') writer.uint32(34).string(message.errorMsg);
     if (message.gasFeeUsed !== '')
       writer.uint32(42).string(message.gasFeeUsed);
+    if (message.pc20WrapperAddress !== '')
+      writer.uint32(50).string(message.pc20WrapperAddress);
     return writer;
   },
 
@@ -222,6 +245,9 @@ export const OutboundObservation: MessageFns<OutboundObservation> = {
         case 5:
           message.gasFeeUsed = reader.string();
           break;
+        case 6:
+          message.pc20WrapperAddress = reader.string();
+          break;
         default:
           if ((tag & 7) === 4 || tag === 0) return message;
           reader.skip(tag & 7);
@@ -238,6 +264,7 @@ export const OutboundObservation: MessageFns<OutboundObservation> = {
     message.txHash = object.txHash ?? '';
     message.errorMsg = object.errorMsg ?? '';
     message.gasFeeUsed = object.gasFeeUsed ?? '';
+    message.pc20WrapperAddress = object.pc20WrapperAddress ?? '';
     return message;
   },
 };
@@ -306,6 +333,8 @@ function createBaseOutboundTxV2(): OutboundTxV2 {
     refundSwapError: '',
     gasToken: '',
     abortReason: '',
+    isPc20: false,
+    pc20ContractAddress: '',
   };
 }
 
@@ -364,6 +393,9 @@ export const OutboundTxV2Codec: MessageFns<OutboundTxV2> = {
       writer.uint32(162).string(message.gasToken); // field 20
     if (message.abortReason !== '')
       writer.uint32(170).string(message.abortReason); // field 21
+    if (message.isPc20 !== false) writer.uint32(176).bool(message.isPc20); // field 22
+    if (message.pc20ContractAddress !== '')
+      writer.uint32(186).string(message.pc20ContractAddress); // field 23
     return writer;
   },
 
@@ -444,6 +476,12 @@ export const OutboundTxV2Codec: MessageFns<OutboundTxV2> = {
         case 21:
           message.abortReason = reader.string();
           break;
+        case 22:
+          message.isPc20 = reader.bool();
+          break;
+        case 23:
+          message.pc20ContractAddress = reader.string();
+          break;
         default:
           if ((tag & 7) === 4 || tag === 0) return message;
           reader.skip(tag & 7);
@@ -494,6 +532,8 @@ export const OutboundTxV2Codec: MessageFns<OutboundTxV2> = {
     message.refundSwapError = object.refundSwapError ?? '';
     message.gasToken = object.gasToken ?? '';
     message.abortReason = object.abortReason ?? '';
+    message.isPc20 = object.isPc20 ?? false;
+    message.pc20ContractAddress = object.pc20ContractAddress ?? '';
     return message;
   },
 };

@@ -74,8 +74,12 @@ function makeInbound(overrides: Partial<Inbound> = {}): Inbound {
     recipient: '0xRecipient',
     amount: '1000000000000000000',
     assetAddr: '0xAsset',
+    logIndex: '0',
     txType: 1,
     verificationData: '0x',
+    isCea: false,
+    rawPayload: '',
+    isPc20: false,
     ...overrides,
   };
 }

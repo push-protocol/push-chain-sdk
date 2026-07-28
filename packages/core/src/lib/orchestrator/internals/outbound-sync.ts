@@ -5,6 +5,7 @@
  * Extracted from Orchestrator.waitForOutboundTx / waitForAllOutboundTxsV2.
  */
 
+import { resolvePC20WrapperForReceipt } from './pc20/tracking';
 import { createPublicClient, fallback, http } from 'viem';
 import { CHAIN_INFO, VM_NAMESPACE } from '../../constants/chain';
 import { CHAIN, VM } from '../../constants/enums';
@@ -463,13 +464,22 @@ export async function waitForOutboundTx(
             // findChildUtxIdFromExternalTx → Cosmos query) keep working.
             // The base58 display form is applied at every user-facing
             // boundary via `toExternalTxHashDisplay` (helpers.ts).
+            // PC20: `externalAssetAddr` is empty when the outbound is first
+            // created, and a repeat export deploys no wrapper so nothing is
+            // ever observed to backfill it. Resolve from UniversalCore instead,
+            // keyed by the Push-native source token.
+            const pc20Wrapper = await resolvePC20WrapperForReceipt(
+              ctx,
+              ob,
+              { network: ctx.pushNetwork, rpcUrls: ctx.rpcUrls }
+            );
             const details: OutboundTxDetails = {
               externalTxHash: ob.observedTx.txHash,
               destinationChain: chain,
               explorerUrl,
               recipient: ob.recipient,
               amount: ob.amount,
-              assetAddr: ob.externalAssetAddr,
+              assetAddr: pc20Wrapper ?? ob.externalAssetAddr,
             };
             printLog(
               ctx,
@@ -786,6 +796,12 @@ export async function waitForAllOutboundTxsV2(
               }
             }
 
+            // Same PC20 fallback as the single-outbound path above.
+            const hopPc20Wrapper = await resolvePC20WrapperForReceipt(ctx, ob, {
+              network: ctx.pushNetwork,
+              rpcUrls: ctx.rpcUrls,
+            });
+
             for (const targetHop of pendingTargetHops) {
               targetHop.status = 'confirmed';
               targetHop.txHash = displayTxHash;
@@ -795,7 +811,7 @@ export async function waitForAllOutboundTxsV2(
                 explorerUrl,
                 recipient: ob.recipient,
                 amount: ob.amount,
-                assetAddr: ob.externalAssetAddr,
+                assetAddr: hopPc20Wrapper ?? ob.externalAssetAddr,
               };
 
               progressHook?.({

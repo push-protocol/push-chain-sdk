@@ -12,7 +12,7 @@ import { CHAIN_INFO, SVM_PYTH_PRICE_FEED } from '../../constants/chain';
 import { CHAIN } from '../../constants/enums';
 import type { UniversalPayload } from '../../generated/v1/tx';
 import { SvmClient } from '../../vm-client/svm-client';
-import type { ExecuteParams, UniversalTxRequest } from '../orchestrator.types';
+import type { LegacyExecuteParams, UniversalTxRequest } from '../orchestrator.types';
 import type { OrchestratorContext } from './context';
 import { buildSvmUniversalTxRequest, getSvmProtocolFee } from './svm-helpers';
 import { signUniversalPayload, encodeUniversalPayloadSvm } from './signing';
@@ -29,7 +29,7 @@ import { computeUEAOffchain, fetchUEAVersion } from './uea-manager';
 export async function sendSVMTxWithFunds(
   ctx: OrchestratorContext,
   params: {
-    execute: ExecuteParams;
+    execute: LegacyExecuteParams;
     mechanism: 'native' | 'approve' | 'permit2' | string;
     universalPayload: UniversalPayload;
     bridgeAmount: bigint;

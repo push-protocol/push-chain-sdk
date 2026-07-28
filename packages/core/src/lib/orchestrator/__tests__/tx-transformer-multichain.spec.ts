@@ -83,6 +83,8 @@ function makeCascadeV2(
       refundSwapError: '',
       gasToken: '',
       abortReason: '',
+        isPc20: false,
+        pc20ContractAddress: '',
     })),
     universalStatus: UniversalTxStatus.UNIVERSAL_TX_STATUS_UNSPECIFIED,
   };
@@ -211,6 +213,8 @@ function makeR2DataWithBurn(burnAmount: string): UniversalTxV2 {
         refundSwapError: '',
         gasToken: '',
         abortReason: '',
+        isPc20: false,
+        pc20ContractAddress: '',
       },
     ],
     universalStatus: UniversalTxStatus.UNIVERSAL_TX_STATUS_UNSPECIFIED,

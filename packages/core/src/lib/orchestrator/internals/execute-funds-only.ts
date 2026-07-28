@@ -20,7 +20,7 @@ import { getOriginEvmClient } from './context';
 import { SvmClient } from '../../vm-client/svm-client';
 import type { TxResponse } from '../../vm-client/vm-client.types';
 import type {
-  ExecuteParams,
+  LegacyExecuteParams,
   UniversalTxResponse,
 } from '../orchestrator.types';
 import type { OrchestratorContext } from './context';
@@ -48,7 +48,7 @@ import { normalizePublicErrorMessage } from '../../formatters';
 
 export async function executeFundsOnly(
   ctx: OrchestratorContext,
-  execute: ExecuteParams,
+  execute: LegacyExecuteParams,
   eventBuffer: ProgressEvent[],
   getResponseCallbacks: () => ResponseBuilderCallbacks
 ): Promise<UniversalTxResponse> {
@@ -99,7 +99,7 @@ export async function executeFundsOnly(
 
 async function executeFundsOnlyEvm(
   ctx: OrchestratorContext,
-  execute: ExecuteParams,
+  execute: LegacyExecuteParams,
   eventBuffer: ProgressEvent[],
   transformFn: (tx: TxResponse, buf?: ProgressEvent[]) => Promise<UniversalTxResponse>,
   chain: CHAIN,
@@ -251,7 +251,12 @@ async function executeFundsOnlyEvm(
 
   fireProgressHook(ctx, PROGRESS_HOOK.SEND_TX_106_01, execute.funds!.amount, execute.funds!.token!.decimals, symbol);
 
-  // Approve gateway to pull tokens if ERC-20
+  // Approve gateway to pull tokens if ERC-20.
+  //
+  // A PC20 wrapper is deliberately NOT approved. The gateway's configured
+  // PC20Factory burns it directly via `burnFrom(sourceAsset, caller, amount)`,
+  // so an allowance here would be granted and never used — a pointless
+  // approval tx and a standing allowance on the user's wrapper balance.
   if (execute.funds!.token!.mechanism === 'approve') {
     await ensureErc20Allowance(ctx, evmClient, tokenAddr, gatewayAddress, execute.funds!.amount);
   } else if (execute.funds!.token!.mechanism === 'permit2') {
@@ -319,7 +324,7 @@ async function executeFundsOnlyEvm(
 
 async function executeFundsOnlySvm(
   ctx: OrchestratorContext,
-  execute: ExecuteParams,
+  execute: LegacyExecuteParams,
   eventBuffer: ProgressEvent[],
   transformFn: (tx: TxResponse, buf?: ProgressEvent[]) => Promise<UniversalTxResponse>,
   chain: CHAIN,

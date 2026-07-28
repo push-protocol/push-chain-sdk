@@ -13,6 +13,31 @@ export type {
   AccountRole,
 } from './universal/universal.types';
 
+// PC20
+export type {
+  PC20TokenReference,
+  FundsToken,
+  PC20RegistryEntry,
+  PC20AddressResult,
+} from './orchestrator/orchestrator.types';
+export { isPC20Reference } from './orchestrator/orchestrator.types';
+export {
+  PC20Error,
+  InvalidPC20AddressError,
+  PC20TokenChainMismatchError,
+  PC20WrapperNotRegisteredError,
+  PC20RegistryMismatchError,
+  PC20FactoryMismatchError,
+  InvalidPC20MetadataError,
+  PC20ExpectedButPRC20Error,
+  PC20AmbiguousAddressError,
+  UnsupportedPC20DestinationError,
+  InsufficientPC20BalanceError,
+  PC20UnknownChainNamespaceError,
+  PC20WrapperPredictionUnavailableError,
+  PC20ExportRevertedError,
+} from './orchestrator/internals/pc20/errors';
+
 // Multi-chain types
 export type {
   ChainTarget,

@@ -24,7 +24,7 @@ import { EvmClient } from '../../vm-client/evm-client';
 import { SvmClient } from '../../vm-client/svm-client';
 import type { TxResponse } from '../../vm-client/vm-client.types';
 import type {
-  ExecuteParams,
+  LegacyExecuteParams,
   UniversalTokenTxRequest,
   UniversalTxResponse,
 } from '../orchestrator.types';
@@ -62,7 +62,7 @@ import { getNativePRC20ForChain } from './helpers';
 
 export async function executeFundsWithPayload(
   ctx: OrchestratorContext,
-  execute: ExecuteParams,
+  execute: LegacyExecuteParams,
   eventBuffer: ProgressEvent[],
   getResponseCallbacks: () => ResponseBuilderCallbacks
 ): Promise<UniversalTxResponse> {

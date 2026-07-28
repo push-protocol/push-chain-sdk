@@ -48,6 +48,7 @@ import {
   extractUniversalSubTxIdFromTx as _extractUniversalSubTxIdFromTx,
   extractAllUniversalSubTxIds as _extractAllUniversalSubTxIds,
 } from './internals';
+import { gateFunds } from './internals/pc20/gate';
 
 type ProgressHook = (progress: ProgressEvent) => void;
 type WrappedProgressHook = ProgressHook & {
@@ -295,10 +296,17 @@ export class Orchestrator {
 
       if (isMultiChain) {
         try {
+          // PC20 gate for the multi-chain routes. Resolves and validates before
+          // the route handlers quote gas or approve anything — a chain/address
+          // mismatch must cost the caller nothing.
+          const gatedParams = (await gateFunds(
+            this.ctx,
+            params as ExecuteParams
+          )) as unknown as UniversalExecuteParams;
           return attachPerCallHookForWait(
             await _executeMultiChain(
               this.ctx,
-              params as UniversalExecuteParams,
+              gatedParams,
               this.execute.bind(this)
             )
           );
@@ -364,10 +372,13 @@ export class Orchestrator {
       try {
         const rcb = () => this._getResponseCallbacks();
         if (execute.funds) {
+          // Single PC20 gate. Downstream builders only ever see the legacy
+          // PRC20/native shape; the PC20 branch is added here in Phase 2.
+          const legacy = await gateFunds(this.ctx, execute);
           return attachPerCallHookForWait(
             !hasData
-              ? await _executeFundsOnly(this.ctx, execute, eventBuffer, rcb)
-              : await _executeFundsWithPayload(this.ctx, execute, eventBuffer, rcb)
+              ? await _executeFundsOnly(this.ctx, legacy, eventBuffer, rcb)
+              : await _executeFundsWithPayload(this.ctx, legacy, eventBuffer, rcb)
           );
         }
         return attachPerCallHookForWait(

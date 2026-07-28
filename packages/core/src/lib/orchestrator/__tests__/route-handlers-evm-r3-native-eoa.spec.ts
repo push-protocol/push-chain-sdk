@@ -5,7 +5,10 @@
 import { CHAIN, PUSH_NETWORK } from '../../constants/enums';
 import { MOVEABLE_TOKEN_CONSTANTS } from '../../constants/tokens';
 import type { OrchestratorContext } from '../internals/context';
-import { buildPayloadForRoute } from '../internals/route-handlers';
+import {
+  buildPayloadForRoute,
+  floorR3NativeValueForGas,
+} from '../internals/route-handlers';
 import type {
   ChainSource,
   UniversalExecuteParams,
@@ -74,5 +77,31 @@ describe('buildPayloadForRoute — EVM Route 3 native Push EOA', () => {
 
     expect(ctx.pushClient.publicClient.getCode).not.toHaveBeenCalled();
     expect(ctx.pushClient.readContract).not.toHaveBeenCalled();
+  });
+});
+
+describe('floorR3NativeValueForGas', () => {
+  it('raises the USD-sized value to the live buffered pool requirement', () => {
+    // Regression values from the live Route 3 failure: the SDK supplied
+    // 18.0509158 PC while the exact-output pool needed more than that.
+    const sizedValue = BigInt('18050915800000000000');
+    const bufferedSwapValue = BigInt('21548231573814332658');
+
+    expect(
+      floorR3NativeValueForGas(
+        sizedValue,
+        bufferedSwapValue,
+        BigInt(0)
+      )
+    ).toBe(bufferedSwapValue);
+  });
+
+  it('preserves a larger category value and includes native protocol fees', () => {
+    expect(
+      floorR3NativeValueForGas(BigInt(500), BigInt(400), BigInt(25))
+    ).toBe(BigInt(500));
+    expect(
+      floorR3NativeValueForGas(BigInt(400), BigInt(400), BigInt(25))
+    ).toBe(BigInt(425));
   });
 });

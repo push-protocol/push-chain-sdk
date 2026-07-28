@@ -15,6 +15,14 @@ export { UNIVERSAL_GATEWAY_PC } from './universalGatewayPC.evm';
 export { UNIVERSAL_CORE_EVM } from './prc20.evm';
 export { UEA_FACTORY_ABI } from './uea-factory';
 
+// PC20
+export {
+  IPC20_EVM,
+  PC20_FACTORY_EVM,
+  PC20_WRAPPER_EVM,
+  EXTERNAL_GATEWAY_PC20_EVM,
+} from './pc20.evm';
+
 // SDK 5.2 gas abstraction (Case C overflow bridging)
 export { WPC_EVM } from './wpc.evm';
 export { UNIV3_SWAP_ROUTER_EVM } from './uniswap-v3-router.evm';

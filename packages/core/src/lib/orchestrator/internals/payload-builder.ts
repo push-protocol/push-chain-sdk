@@ -15,7 +15,7 @@ import {
 } from 'viem';
 import { VerificationType } from '../../generated/v1/tx';
 import type {
-  ExecuteParams,
+  LegacyExecuteParams,
   MultiCall,
   UniversalTxRequest,
 } from '../orchestrator.types';
@@ -121,7 +121,7 @@ export function buildMulticallPayloadData(
  */
 export async function buildGatewayPayloadAndGas(
   ctx: OrchestratorContext,
-  execute: ExecuteParams,
+  execute: LegacyExecuteParams,
   nonce: bigint,
   type: 'sendFunds' | 'sendTxWithFunds',
   fundsValue?: bigint

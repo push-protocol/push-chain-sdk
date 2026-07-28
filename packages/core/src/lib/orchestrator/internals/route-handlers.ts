@@ -1,3 +1,10 @@
+import { assertLegacyFunds } from './pc20/gate';
+import type { ResolvedPC20 } from './pc20/resolver';
+import {
+  buildPC20ExportPayload,
+  validatePC20Export,
+  queryPC20OutboundGasFee,
+} from './pc20/export';
 /**
  * Route handler functions extracted from Orchestrator.
  *
@@ -113,6 +120,21 @@ export function shouldSkipFeeLockingForOutbound(opts: {
   );
 }
 
+/**
+ * Keep Route 3's USD/category sizing, but never let it undercut the live
+ * WPC -> destination-gas-token swap requirement. `bufferedSwapValue` is the
+ * balance-aware result from estimateNativeValueForSwap; protocol fees are
+ * native PC and therefore sit on top of that swap budget.
+ */
+export function floorR3NativeValueForGas(
+  sizedValue: bigint,
+  bufferedSwapValue: bigint,
+  protocolFee: bigint
+): bigint {
+  const livePoolFloor = bufferedSwapValue + protocolFee;
+  return livePoolFloor > sizedValue ? livePoolFloor : sizedValue;
+}
+
 // =============================================================================
 // Route 2 (UEA → CEA) phase helpers
 // =============================================================================
@@ -135,6 +157,14 @@ function resolveR2Prc20TokenEvm(
     prc20Token = getNativePRC20ForChain(targetChain, pushNetwork);
     burnAmount = BigInt(0);
   } else if (params.funds?.amount) {
+    // PC20 export: the token being locked IS the Push-native PC20. There is no
+    // synthetic PRC20 to look up, and the resolver already established it.
+    const pc20 = (params as { _pc20?: { pushAddress: `0x${string}` } })._pc20;
+    if (pc20) {
+      prc20Token = pc20.pushAddress;
+      burnAmount = params.funds.amount;
+      return { prc20Token, burnAmount };
+    }
     // User explicitly specified funds with token
     const token = (params.funds as { token: MoveableToken }).token;
     if (token) {
@@ -285,7 +315,7 @@ function buildR3SvmExtraPayload(
     multicallCtx,
     executeParams.to,
     buildExecuteMulticall({
-      execute: executeParams,
+      execute: assertLegacyFunds(executeParams),
       ueaAddress,
       allowSelfValueCall: true,
     })
@@ -307,7 +337,14 @@ function buildR2CeaPayloadEvm(
   ceaAddress: string,
   targetAddress: `0x${string}`,
   targetChain: CHAIN,
-  pushNetwork: PUSH_NETWORK
+  pushNetwork: PUSH_NETWORK,
+  /**
+   * PC20 export only: the destination wrapper address (registered, or predicted
+   * for a first export). Destination settlement mints the wrapper into the CEA
+   * before running user data, so delivering funds to the requested recipient
+   * needs an explicit wrapper.transfer() built here.
+   */
+  pc20Wrapper?: `0x${string}`
 ): `0x${string}` {
   if (params.migration) {
     return buildMigrationPayload();
@@ -316,11 +353,15 @@ function buildR2CeaPayloadEvm(
   const ceaMulticalls: MultiCall[] = [];
   const hasData = hasExecutablePayloadData(params.data);
   const fundsToken = params.funds?.amount
-    ? resolveR2DestinationFundsToken(
-        (params.funds as { token: MoveableToken }).token,
-        targetChain,
-        pushNetwork
-      )
+    ? pc20Wrapper
+      // A PC20 has no MoveableToken form; the wrapper is an ordinary ERC20 on
+      // the destination, so it forwards through the same transfer() path.
+      ? ({ address: pc20Wrapper, mechanism: 'approve' } as MoveableToken)
+      : resolveR2DestinationFundsToken(
+          (params.funds as { token: MoveableToken }).token,
+          targetChain,
+          pushNetwork
+        )
     : undefined;
   const nativeFundsValue =
     params.funds?.amount && fundsToken?.mechanism === 'native'
@@ -631,7 +672,13 @@ export async function executeUoaToCea(
   if (prc20Token !== (ZERO_ADDRESS as `0x${string}`)) {
     fireProgressHook(ctx, PROGRESS_HOOK.SEND_TX_202_01, targetChain);
     try {
-      const result = await queryOutboundGasFee(ctx, prc20Token, gasLimitForQuery, targetChain);
+      // PC20 exports must not use getOutboundTxGasAndFees — only
+      // getPC20ExportGasAndFees accounts for the first-export deployment
+      // overhead, and quoting the wrong one strands the destination transfer.
+      const pc20Export = (params as { _pc20?: { direction: string } })._pc20;
+      const result = pc20Export?.direction === 'export'
+        ? await queryPC20OutboundGasFee(ctx, prc20Token, gasLimitForQuery, targetChain)
+        : await queryOutboundGasFee(ctx, prc20Token, gasLimitForQuery, targetChain);
       gasFee = result.gasFee;
       protocolFee = result.protocolFee;
       gasToken = result.gasToken;
@@ -684,12 +731,36 @@ export async function executeUoaToCea(
 
   // --- Build CEA payload (requires ceaAddress for self-call check) ---
   // Delegates to `buildR2CeaPayloadEvm` — see helper definition above.
+  //
+  // PC20 export: resolve the destination wrapper BEFORE anything approves or
+  // locks the source token. A first export has no registered wrapper, so the
+  // address is predicted from the live registered factory; if that cannot be
+  // established this throws here, with nothing yet committed.
+  const pc20Descriptor = (params as { _pc20?: ResolvedPC20 })._pc20;
+  const isPc20Export = pc20Descriptor?.direction === 'export';
+  let pc20Wrapper: `0x${string}` | undefined;
+  if (isPc20Export && pc20Descriptor) {
+    const { wrapper } = await validatePC20Export(
+      ctx,
+      pc20Descriptor,
+      targetChain,
+      { network: ctx.pushNetwork, rpcUrls: ctx.rpcUrls }
+    );
+    pc20Wrapper = wrapper.address as `0x${string}`;
+    printLog(
+      ctx,
+      `executeUoaToCea — PC20 export: destination wrapper ${pc20Wrapper} ` +
+        `(${wrapper.deployed ? 'registered' : 'predicted, first export'})`
+    );
+  }
+
   const ceaPayload: `0x${string}` = buildR2CeaPayloadEvm(
     params,
     ceaAddress,
     targetAddress as `0x${string}`,
     targetChain,
-    ctx.pushNetwork
+    ctx.pushNetwork,
+    pc20Wrapper
   );
   if (params.migration) {
     printLog(
@@ -706,12 +777,26 @@ export async function executeUoaToCea(
     : ceaAddress;
   assertCeaFundsParkingInvariant(targetBytes, ceaPayload);
 
+  // PC20 export: the gateway expects the PC20 selector plus the destination
+  // wrapper metadata ahead of the user data. Inbound is the mirror image — the
+  // external gateway prepends the selector there, so the SDK must not.
+  const outboundPayload: `0x${string}` =
+    isPc20Export && pc20Descriptor
+      ? buildPC20ExportPayload({
+          destinationChain: targetChain,
+          name: pc20Descriptor.name,
+          symbol: pc20Descriptor.symbol,
+          decimals: pc20Descriptor.decimals,
+          destinationUserData: ceaPayload,
+        })
+      : ceaPayload;
+
   const outboundReq: UniversalOutboundTxRequest = buildOutboundRequest(
     targetBytes,
     prc20Token,
     burnAmount,
     gasLimitForQuery,
-    ceaPayload,
+    outboundPayload,
     ueaAddress, // revert recipient is the UEA
     params.maxPCForGas ?? BigInt(0)
   );
@@ -753,7 +838,6 @@ export async function executeUoaToCea(
   // Case A/B/C sizing.
   // ---------------------------------------------------------------------
   const EVM_GAS_RESERVE = BigInt(3e18); // 3 UPC for outer-tx gas
-  const EVM_NATIVE_VALUE_SAFETY_CAP = BigInt(200e18); // 200 UPC absolute ceiling
   const ROUTE2_MINIMUM_DEPOSIT_USD = Utils.helpers.parseUnits('10', 8); // $10
 
   // Effective balance: real for deployed UEAs; predicted post-fee-lock for fresh.
@@ -791,14 +875,6 @@ export async function executeUoaToCea(
     printLog(ctx,
       `executeUoaToCea — nativeValueForGas=${nativeValueForGas.toString()} (includes 2.2x buffer)`
     );
-  }
-
-  // Hard safety cap so a broken pool price can't drain the UEA.
-  if (nativeValueForGas > EVM_NATIVE_VALUE_SAFETY_CAP) {
-    printLog(ctx,
-      `executeUoaToCea — capping nativeValueForGas at 200 UPC ceiling (was ${nativeValueForGas.toString()})`
-    );
-    nativeValueForGas = EVM_NATIVE_VALUE_SAFETY_CAP;
   }
 
   // Pre-flight: warns by default when UEA cannot cover (nativeValueForGas +
@@ -1484,6 +1560,7 @@ export async function executeCeaToPush(
   let protocolFeeR3 = BigInt(0);
   let nativeValueForGas = BigInt(0);
   let gasToken: `0x${string}` = ZERO_ADDRESS as `0x${string}`;
+  let universalCoreAddress: `0x${string}` | undefined;
   let sizingDecisionR3: GasSizingDecision | undefined;
   if (prc20Token !== (ZERO_ADDRESS as `0x${string}`)) {
     fireProgressHook(ctx, PROGRESS_HOOK.SEND_TX_302_01, sourceChain);
@@ -1493,6 +1570,7 @@ export async function executeCeaToPush(
       gasFee = result.gasFee;
       protocolFeeR3 = result.protocolFee;
       nativeValueForGas = result.nativeValueForGas;
+      universalCoreAddress = result.universalCoreAddress;
       sizingDecisionR3 = result.sizing;
       outboundReq = buildOutboundRequest(
         ceaAddress,
@@ -1550,6 +1628,40 @@ export async function executeCeaToPush(
       `executeCeaToPush — Case C: bumping nativeValueForGas from ${nativeValueForGas} to ${bumped} (overflow=${sizingDecisionR3.overflowNativePc})`
     );
     nativeValueForGas = bumped;
+  }
+
+  // The USD sizer can be a few basis points below the executable pool quote
+  // (for example when native Push falls back to the fixed $0.10 PC price).
+  // Because swapAndBurnGas buys an exact gas-token output, even a small
+  // shortfall reverts the entire atomic Push transaction. Floor the category
+  // result with the same live exact-output quote used by Route 2. The quote's
+  // 2.2x buffer is automatically capped to balance - 3 PC when that still
+  // covers the unbuffered swap minimum, and excess is refunded on-chain.
+  if (universalCoreAddress && gasFee > BigInt(0)) {
+    const balanceAvailableForSwap =
+      ueaBalance > protocolFeeR3
+        ? ueaBalance - protocolFeeR3
+        : BigInt(0);
+    const bufferedSwapValue = await estimateNativeValueForSwap(
+      ctx,
+      universalCoreAddress,
+      gasToken,
+      gasFee,
+      balanceAvailableForSwap
+    );
+    const poolFlooredValue = floorR3NativeValueForGas(
+      nativeValueForGas,
+      bufferedSwapValue,
+      protocolFeeR3
+    );
+    if (poolFlooredValue > nativeValueForGas) {
+      printLog(
+        ctx,
+        `executeCeaToPush — bumping nativeValueForGas ${nativeValueForGas.toString()} → ${poolFlooredValue.toString()} ` +
+          `(live exact-output pool floor, bufferedSwap=${bufferedSwapValue.toString()}, protocolFee=${protocolFeeR3.toString()})`
+      );
+      nativeValueForGas = poolFlooredValue;
+    }
   }
 
   // Adjust nativeValueForGas using UEA balance (contract refunds excess)
@@ -2087,7 +2199,7 @@ export async function buildPayloadForRoute(
       // Build standard Push Chain payload
       const executeParams = toExecuteParams(params);
       const multicallData = buildExecuteMulticall({
-        execute: executeParams,
+        execute: assertLegacyFunds(executeParams),
         ueaAddress,
       });
       const payload = buildMulticallPayloadData(

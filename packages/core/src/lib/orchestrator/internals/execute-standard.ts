@@ -1,3 +1,4 @@
+import { assertLegacyFunds } from './pc20/gate';
 /**
  * Standard payload execution flow (no funds) — extracted from Orchestrator.execute().
  *
@@ -264,7 +265,7 @@ export async function executeStandardPayload(
   if (Array.isArray(execute.data)) {
     payloadTo = zeroAddress;
     payloadData = buildMulticallPayloadData(
-      ctx, execute.to, buildExecuteMulticall({ execute, ueaAddress: UEA })
+      ctx, execute.to, buildExecuteMulticall({ execute: assertLegacyFunds(execute), ueaAddress: UEA })
     );
     // Wrap in full UniversalPayload encoding for gateway req (matches non-array paths)
     const universalPayloadForReq = JSON.parse(
@@ -289,7 +290,7 @@ export async function executeStandardPayload(
       if (execute.funds) {
         payloadTo = zeroAddress;
         payloadData = buildMulticallPayloadData(
-          ctx, execute.to, buildExecuteMulticall({ execute, ueaAddress: UEA })
+          ctx, execute.to, buildExecuteMulticall({ execute: assertLegacyFunds(execute), ueaAddress: UEA })
         );
         req = buildUniversalTxRequest(ctx.universalSigner.account.address as `0x${string}`, {
           recipient: zeroAddress, token: zeroAddress, amount: BigInt(0), payload: payloadData,
@@ -298,7 +299,7 @@ export async function executeStandardPayload(
         payloadTo = execute.to;
         payloadData = execute.data || '0x';
         const reqData = buildMulticallPayloadData(
-          ctx, execute.to, buildExecuteMulticall({ execute, ueaAddress: UEA })
+          ctx, execute.to, buildExecuteMulticall({ execute: assertLegacyFunds(execute), ueaAddress: UEA })
         );
         const universalPayloadOther = JSON.parse(
           JSON.stringify({
@@ -322,7 +323,7 @@ export async function executeStandardPayload(
       payloadTo = execute.to;
       payloadData = execute.data || '0x';
       const reqData = buildMulticallPayloadData(
-        ctx, execute.to, buildExecuteMulticall({ execute, ueaAddress: UEA })
+        ctx, execute.to, buildExecuteMulticall({ execute: assertLegacyFunds(execute), ueaAddress: UEA })
       );
       const universalPayloadSelf = JSON.parse(
         JSON.stringify({

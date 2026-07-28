@@ -78,6 +78,103 @@ export const UNIVERSAL_CORE_EVM = [
     ],
     stateMutability: 'payable',
   },
+  // ---------------------------------------------------------------------
+  // PC20 export + registry
+  //
+  // Source: push-chain-core-contracts/src/Interfaces/IUniversalCore.sol
+  // `destChain` / `chainNamespace` are CAIP-2 chain ids ("eip155:11155111").
+  // Wrapper identities are bytes32: EVM addresses left-padded, Solana pubkeys
+  // stored raw. See internals/pc20/address-codec.ts.
+  // ---------------------------------------------------------------------
+  {
+    type: 'function',
+    name: 'getPC20ExportGasAndFees',
+    inputs: [
+      { name: 'destChainNamespace', type: 'string', internalType: 'string' },
+      { name: 'gasLimit', type: 'uint256', internalType: 'uint256' },
+      { name: 'pc20Token', type: 'address', internalType: 'address' },
+    ],
+    outputs: [
+      { name: 'gasToken', type: 'address', internalType: 'address' },
+      { name: 'gasFee', type: 'uint256', internalType: 'uint256' },
+      { name: 'protocolFee', type: 'uint256', internalType: 'uint256' },
+      { name: 'gasPrice', type: 'uint256', internalType: 'uint256' },
+      { name: 'chainNamespace', type: 'string', internalType: 'string' },
+      { name: 'gasLimitUsed', type: 'uint256', internalType: 'uint256' },
+      { name: 'isFirstExport', type: 'bool', internalType: 'bool' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'pc20DeploymentGasOverhead',
+    inputs: [{ name: 'chainNamespace', type: 'string', internalType: 'string' }],
+    outputs: [{ name: 'overhead', type: 'uint256', internalType: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'pc20Deployed',
+    inputs: [
+      { name: 'sourceAsset', type: 'address', internalType: 'address' },
+      { name: 'destChain', type: 'string', internalType: 'string' },
+    ],
+    outputs: [{ name: '', type: 'bool', internalType: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'getPC20Wrapper',
+    inputs: [
+      { name: 'sourceAsset', type: 'address', internalType: 'address' },
+      { name: 'destChain', type: 'string', internalType: 'string' },
+    ],
+    outputs: [
+      { name: 'wrapper', type: 'bytes32', internalType: 'bytes32' },
+      { name: 'deployed', type: 'bool', internalType: 'bool' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'getPC20Source',
+    inputs: [
+      { name: 'wrapper', type: 'bytes32', internalType: 'bytes32' },
+      { name: 'destChain', type: 'string', internalType: 'string' },
+    ],
+    outputs: [
+      { name: 'sourceAsset', type: 'address', internalType: 'address' },
+      { name: 'known', type: 'bool', internalType: 'bool' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'pc20FactoryByChain',
+    inputs: [{ name: 'chainNamespace', type: 'string', internalType: 'string' }],
+    outputs: [{ name: 'factory', type: 'bytes32', internalType: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'pc20WrapperBySource',
+    inputs: [
+      { name: 'sourceAsset', type: 'address', internalType: 'address' },
+      { name: 'destChain', type: 'string', internalType: 'string' },
+    ],
+    outputs: [{ name: 'wrapper', type: 'bytes32', internalType: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'pc20SourceByWrapper',
+    inputs: [
+      { name: 'destChain', type: 'string', internalType: 'string' },
+      { name: 'wrapper', type: 'bytes32', internalType: 'bytes32' },
+    ],
+    outputs: [{ name: 'sourceAsset', type: 'address', internalType: 'address' }],
+    stateMutability: 'view',
+  },
   // Errors
   {
     type: 'error',

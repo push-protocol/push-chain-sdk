@@ -512,7 +512,9 @@ describe('composeCascadeDetailed', () => {
 
   it('uses pool-quoted native value for EVM cascade outbounds instead of flat balance split', async () => {
     const wei = BigInt('1000000000000000000');
-    const exactWpcNeeded = BigInt(50) * wei;
+    // Deliberately above the old 200 PC hard ceiling. The composer must keep
+    // the live quote; truncating this to 200 PC produces Uniswap `STF`.
+    const exactWpcNeeded = BigInt(500) * wei;
     const quotedWithBuffer = (exactWpcNeeded * BigInt(22)) / BigInt(10);
     const hop = makeRoute2Hop(CHAIN.ETHEREUM_SEPOLIA, [], {
       burnAmount: BigInt(0),
@@ -531,6 +533,74 @@ describe('composeCascadeDetailed', () => {
       gasFee: BigInt(1_000_000),
       gasPrice: BigInt(1),
       gasLimit: BigInt(500_000),
+      maxPCForGas: BigInt(0),
+    };
+    const readContract = jest.fn(async ({ functionName }) => {
+      switch (functionName) {
+        case 'universalCore':
+          return '0x5555555555555555555555555555555555555555';
+        case 'WPC':
+          return '0x1000000000000000000000000000000000000000';
+        case 'uniswapV3Factory':
+          return '0x2000000000000000000000000000000000000000';
+        case 'defaultFeeTier':
+          return 3000;
+        case 'quoteExactOutputSingle':
+          return [exactWpcNeeded, BigInt(0), 0, BigInt(0)];
+        default:
+          throw new Error(`unexpected readContract: ${String(functionName)}`);
+      }
+    });
+    const ctx = {
+      printTraces: false,
+      progressHook: () => undefined,
+      pushNetwork: 'TESTNET_DONUT',
+      pushClient: { readContract },
+      universalSigner: {
+        account: { chain: CHAIN.ETHEREUM_SEPOLIA, address: ALICE },
+      },
+    } as unknown as OrchestratorContext;
+
+    const { multicalls, requiredNativeValue } = await composeCascadeDetailed(
+      ctx,
+      [segment],
+      UEA,
+      BigInt(30) * wei
+    );
+    const outboundCall = multicalls.find((call) =>
+      call.data.startsWith('0x77b86bec')
+    );
+
+    expect(outboundCall).toBeDefined();
+    expect(outboundCall!.value).toBe(quotedWithBuffer);
+    expect(requiredNativeValue).toBe(quotedWithBuffer);
+  });
+
+  it('uses the live EVM pool quote for Route 3 wrapper gas instead of the flat split', async () => {
+    const wei = BigInt('1000000000000000000');
+    const exactWpcNeeded = BigInt(500) * wei;
+    const quotedWithBuffer = (exactWpcNeeded * BigInt(22)) / BigInt(10);
+    const hop = makeRoute3Hop(CHAIN.BNB_TESTNET, {
+      burnAmount: BigInt(0),
+      gasFee: BigInt(1_000_000),
+      gasPrice: BigInt(1),
+      gasLimit: BigInt(750_000),
+      params: {
+        from: { chain: CHAIN.BNB_TESTNET },
+        to: ALICE,
+        data: '0x',
+      } as UniversalExecuteParams,
+    });
+    const segment: CascadeSegment = {
+      type: 'INBOUND_FROM_CEA',
+      hops: [hop],
+      sourceChain: CHAIN.BNB_TESTNET,
+      totalBurnAmount: BigInt(0),
+      prc20Token: TOKEN_A,
+      gasToken: TOKEN_A,
+      gasFee: BigInt(1_000_000),
+      gasPrice: BigInt(1),
+      gasLimit: BigInt(750_000),
       maxPCForGas: BigInt(0),
     };
     const readContract = jest.fn(async ({ functionName }) => {

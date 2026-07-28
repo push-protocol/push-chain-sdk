@@ -8,7 +8,7 @@ import { ZERO_ADDRESS, MIGRATION_SELECTOR, MULTICALL_SELECTOR, UEA_MULTICALL_SEL
 import { CHAIN_INFO } from '../constants/chain';
 import { VM, CHAIN } from '../constants/enums';
 import type {
-  ExecuteParams,
+  LegacyExecuteParams,
   MultiCall,
   UniversalOutboundTxRequest,
   ChainTarget,
@@ -24,7 +24,7 @@ export function buildExecuteMulticall({
   logger,
   allowSelfValueCall = false,
 }: {
-  execute: ExecuteParams;
+  execute: LegacyExecuteParams;
   ueaAddress: `0x${string}`;
   logger?: (msg: string) => void;
   allowSelfValueCall?: boolean;
@@ -87,7 +87,14 @@ export function buildExecuteMulticall({
         functionName: 'transfer',
         args: [execute.to, execute.funds?.amount],
       });
-      const { address: pushChainTo } = PushChain.utils.tokens.getPRC20Address(token);
+      // A PC20 unlocks as its canonical Push-native token, which the resolver
+      // already established. `getPRC20Address` must not run for it — there is
+      // no static synthetic mapping to look up, and the symbol carries no
+      // authority.
+      const pc20 = (execute as { _pc20?: { pushAddress: `0x${string}` } })._pc20;
+      const pushChainTo = pc20
+        ? pc20.pushAddress
+        : PushChain.utils.tokens.getPRC20Address(token).address;
       multicallData.push({
         to: pushChainTo,
         value: BigInt(0),
