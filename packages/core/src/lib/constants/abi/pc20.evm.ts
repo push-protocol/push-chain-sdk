@@ -114,6 +114,25 @@ export const PC20_WRAPPER_EVM = [
 ] as const;
 
 /**
+ * Destination Vault's configured factory.
+ *
+ * The Vault — not the gateway — is what calls `deployWrapper` at settlement
+ * (`Vault.sol:327`), so this is the authoritative answer to where a
+ * not-yet-deployed wrapper will land. Both pointers exist independently and are
+ * set separately; they happen to agree on all four testnets today, but only
+ * this one governs deployment.
+ */
+export const VAULT_PC20_FACTORY_EVM = [
+  {
+    type: 'function',
+    name: 'pc20Factory',
+    inputs: [],
+    outputs: [{ name: '', type: 'address', internalType: 'contract IPC20Factory' }],
+    stateMutability: 'view',
+  },
+] as const;
+
+/**
  * External gateway's configured factory.
  *
  * Compared against `UniversalCore.pc20FactoryByChain` — if they disagree the

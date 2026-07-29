@@ -15,9 +15,21 @@
  *      gateway must be able to pull it.
  */
 
-import { encodeAbiParameters, encodePacked, getAddress, type Hex } from 'viem';
+import {
+  createPublicClient,
+  encodeAbiParameters,
+  encodePacked,
+  getAddress,
+  http,
+  type Hex,
+} from 'viem';
 import { CHAIN } from '../../../constants/enums';
-import { UNIVERSAL_CORE_EVM, PC20_FACTORY_EVM } from '../../../constants/abi';
+import {
+  UNIVERSAL_CORE_EVM,
+  PC20_FACTORY_EVM,
+  VAULT_PC20_FACTORY_EVM,
+} from '../../../constants/abi';
+import { CHAIN_INFO, VAULT_ADDRESSES } from '../../../constants/chain';
 import type { OrchestratorContext } from '../context';
 import { printLog } from '../context';
 import { chainToNamespace, vmForChain } from './chain-namespace';
@@ -226,6 +238,13 @@ export async function queryPC20OutboundGasFee(
   universalCoreAddress: `0x${string}`;
   isFirstExport: boolean;
   gasLimitCeiling: bigint;
+  /**
+   * Always zero. Present only for shape-compatibility with
+   * `queryOutboundGasFee` — both the EVM and SVM callers size the actual
+   * native value themselves (estimateNativeValueForSwap) from gasFee, and
+   * never consume this field from the quote.
+   */
+  nativeValueForGas: bigint;
 }> {
   const opts: PC20ResolverOptions = {
     network: ctx.pushNetwork,
@@ -243,6 +262,7 @@ export async function queryPC20OutboundGasFee(
     universalCoreAddress,
     isFirstExport: quote.isFirstExport,
     gasLimitCeiling: quote.gasLimitCeiling,
+    nativeValueForGas: BigInt(0),
   };
 }
 
@@ -273,11 +293,25 @@ export type DestinationWrapper = {
  * the revert path. Every failure here therefore throws rather than falling back
  * to a guess.
  *
- * The prediction is read from the live registered factory's own
- * `computeWrapperAddress`, which derives from its own
- * `type(PC20Wrapper).creationCode`. That is why the SDK does not mirror the
- * CREATE2 derivation locally: a mirrored init-code hash can drift from the
- * deployed bytecode, while asking the factory cannot.
+ * The prediction is read from the live factory's own `computeWrapperAddress`,
+ * which derives from its own `type(PC20Wrapper).creationCode`. That is why the
+ * SDK does not mirror the CREATE2 derivation locally: a mirrored init-code hash
+ * can drift from the deployed bytecode, while asking the factory cannot.
+ *
+ * ## Which factory to ask
+ *
+ * Two contracts hold a `pc20Factory` pointer, and they are not the same slot:
+ *
+ *   - `UniversalCore.pc20FactoryByChain(ns)` on Push — the protocol's registry
+ *     mirror, and the value Tier B cross-checks against.
+ *   - `Vault.pc20Factory()` on the destination chain — the contract that
+ *     actually calls `deployWrapper` at settlement (`Vault.sol:327`).
+ *
+ * The Vault is therefore the authoritative answer to "where will the wrapper
+ * land"; the registry copy can go stale without settlement noticing. The
+ * registry is preferred when available so the two stay cross-checked, with the
+ * Vault as fallback — which also keeps first exports working while
+ * `pc20FactoryByChain` is missing from the deployed UniversalCore.
  */
 export async function resolveDestinationWrapper(
   ctx: OrchestratorContext,
@@ -293,32 +327,20 @@ export async function resolveDestinationWrapper(
   }
 
   if (vmForChain(destinationChain) !== 'EVM') {
-    // SVM predicts via the pc20_mint PDA; see svm-export.ts.
-    throw new PC20WrapperPredictionUnavailableError({
-      chain: String(destinationChain),
-      chainNamespace: namespace,
-      hint: 'SVM first-export prediction is handled on the SVM path.',
-    });
+    // SVM: the wrapper is the deterministic `pc20_mint` PDA — a pure local
+    // derivation, so unlike EVM there is no factory to consult and prediction
+    // cannot drift from deployment (the program derives from the same seeds,
+    // state.rs:13). `deployed` is decided by whether the mint account exists.
+    return resolveSvmDestinationWrapper(pushPC20, destinationChain, opts);
   }
 
-  // First export — predict, but only from the factory UniversalCore registers.
-  const core = await getUniversalCoreAddress(opts);
-  const factoryRaw = await ctx.pushClient.readContract<Hex>({
-    address: core,
-    abi: UNIVERSAL_CORE_EVM,
-    functionName: 'pc20FactoryByChain',
-    args: [namespace],
-  });
-
-  if (!factoryRaw || isZeroBytes32(factoryRaw)) {
-    throw new UnsupportedPC20DestinationError({
-      chain: String(destinationChain),
-      chainNamespace: namespace,
-      hint: 'UniversalCore has no PC20 factory registered for this chain.',
-    });
-  }
-
-  const factory = getAddress(pc20Bytes32ToAddress(destinationChain, factoryRaw));
+  // First export — predict from the live factory.
+  const { factory, source } = await resolveDestinationFactory(
+    ctx,
+    destinationChain,
+    opts
+  );
+  printLog(ctx, `resolveDestinationWrapper — factory ${factory} (via ${source})`);
 
   let predicted: string;
   try {
@@ -336,6 +358,140 @@ export async function resolveDestinationWrapper(
   }
 
   return { address: getAddress(predicted), deployed: false };
+}
+
+/**
+ * SVM destination wrapper: the deterministic `pc20_mint` PDA.
+ *
+ * Derived locally from `[b"pc20_mint", source_asset_20]` under the gateway
+ * program (mirrors `pc20.rs` / validated against the deployed devnet binary,
+ * which contains the same seed strings). Existence of the mint account is what
+ * distinguishes a repeat export from a first one — settlement creates the mint
+ * idempotently either way, so a wrong `deployed` flag here costs gas headroom,
+ * not funds.
+ */
+async function resolveSvmDestinationWrapper(
+  pushPC20: `0x${string}`,
+  destinationChain: CHAIN,
+  opts: PC20ResolverOptions
+): Promise<DestinationWrapper> {
+  const { PublicKey, Connection } = await import('@solana/web3.js');
+  const { SVM_GATEWAY_IDL } = await import('../../../constants/abi');
+  const { predictSvmWrapperMint } = await import('./svm');
+
+  const programId = new PublicKey((SVM_GATEWAY_IDL as { address: string }).address);
+  const mint = predictSvmWrapperMint(programId, pushPC20);
+
+  const rpc =
+    opts.rpcUrls?.[destinationChain]?.[0] ??
+    CHAIN_INFO[destinationChain]?.defaultRPC?.[0];
+  if (!rpc) {
+    throw new UnsupportedPC20DestinationError({
+      chain: String(destinationChain),
+      hint: 'No RPC URL configured for this chain.',
+    });
+  }
+
+  let deployed = false;
+  try {
+    const info = await new Connection(rpc).getAccountInfo(mint);
+    deployed = info !== null;
+  } catch (err) {
+    // The PDA derivation is still valid; only the deployed flag is unknown.
+    // Downstream decisions (gas headroom, whether recipient-ATA delivery is
+    // even possible) hinge on that flag, so guessing is worse than aborting —
+    // and this runs pre-approval, so aborting locks nothing.
+    throw new PC20WrapperPredictionUnavailableError({
+      chain: String(destinationChain),
+      address: mint.toBase58(),
+      hint:
+        'Could not query the Solana RPC to check mint existence. Aborted ' +
+        `before approval, so no funds are locked. (${err instanceof Error ? err.message : String(err)})`,
+    });
+  }
+
+  return { address: mint.toBase58(), deployed };
+}
+
+/**
+ * Find the factory that will deploy the destination wrapper.
+ *
+ * Prefers UniversalCore's registry so the value stays cross-checked against the
+ * protocol's own view. Falls back to the destination `Vault.pc20Factory()` —
+ * the contract that actually calls `deployWrapper` — when the registry has no
+ * entry or does not expose the accessor at all.
+ *
+ * The fallback is not a guess. The Vault is strictly closer to the truth for
+ * this question: settlement reads *its* pointer, so a wrapper predicted from it
+ * cannot disagree with where the wrapper is deployed, whereas a stale registry
+ * mirror can.
+ */
+async function resolveDestinationFactory(
+  ctx: OrchestratorContext,
+  destinationChain: CHAIN,
+  opts: PC20ResolverOptions
+): Promise<{ factory: `0x${string}`; source: 'registry' | 'vault' }> {
+  const namespace = chainToNamespace(destinationChain);
+
+  const core = await getUniversalCoreAddress(opts);
+  const factoryRaw = await ctx.pushClient
+    .readContract<Hex>({
+      address: core,
+      abi: UNIVERSAL_CORE_EVM,
+      functionName: 'pc20FactoryByChain',
+      args: [namespace],
+    })
+    .catch(() => undefined);
+
+  if (factoryRaw && !isZeroBytes32(factoryRaw)) {
+    return {
+      factory: getAddress(pc20Bytes32ToAddress(destinationChain, factoryRaw)),
+      source: 'registry',
+    };
+  }
+
+  const vault = VAULT_ADDRESSES[destinationChain];
+  if (!vault) {
+    throw new UnsupportedPC20DestinationError({
+      chain: String(destinationChain),
+      chainNamespace: namespace,
+      hint:
+        'UniversalCore has no PC20 factory registered for this chain, and no ' +
+        'Vault address is configured to fall back to.',
+    });
+  }
+
+  const client = destinationClient(destinationChain, opts);
+  const vaultFactory = (await client
+    .readContract({
+      address: getAddress(vault),
+      abi: VAULT_PC20_FACTORY_EVM,
+      functionName: 'pc20Factory',
+      args: [],
+    })
+    .catch(() => undefined)) as `0x${string}` | undefined;
+
+  if (!vaultFactory || vaultFactory === '0x0000000000000000000000000000000000000000') {
+    throw new UnsupportedPC20DestinationError({
+      chain: String(destinationChain),
+      chainNamespace: namespace,
+      hint: 'Neither UniversalCore nor the destination Vault has a PC20 factory set.',
+    });
+  }
+
+  return { factory: getAddress(vaultFactory), source: 'vault' };
+}
+
+/** Public client for a destination chain, honouring `rpcUrls` overrides. */
+function destinationClient(chain: CHAIN, opts: PC20ResolverOptions) {
+  const rpc = opts.rpcUrls?.[chain]?.[0] ?? CHAIN_INFO[chain]?.defaultRPC?.[0];
+  if (!rpc) {
+    throw new UnsupportedPC20DestinationError({
+      chain: String(chain),
+      hint: 'No RPC URL configured for this chain.',
+    });
+  }
+  return createPublicClient({ transport: http(rpc) });
 }
 
 async function readPredictedWrapper(
@@ -389,20 +545,11 @@ export async function validatePC20Export(
 
   assertMetadataFitsFactoryLimits(resolved.name, resolved.symbol);
 
-  const core = await getUniversalCoreAddress(opts);
-  const factoryRaw = await ctx.pushClient.readContract<Hex>({
-    address: core,
-    abi: UNIVERSAL_CORE_EVM,
-    functionName: 'pc20FactoryByChain',
-    args: [namespace],
-  });
-  if (!factoryRaw || isZeroBytes32(factoryRaw)) {
-    throw new UnsupportedPC20DestinationError({
-      chain: String(destinationChain),
-      chainNamespace: namespace,
-    });
-  }
-
+  // The destination factory is deliberately NOT read here. A repeat export
+  // targets an already-registered wrapper and never needs it, so requiring it
+  // up front would fail exports that are perfectly safe. Only the first-export
+  // prediction path depends on the factory, and `resolveDestinationWrapper`
+  // reads it there — where a failure correctly aborts before approval.
   const wrapper = await resolveDestinationWrapper(ctx, resolved.pushAddress, destinationChain, opts);
   return { wrapper, namespace };
 }

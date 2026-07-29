@@ -65,6 +65,9 @@ import { PriceFetch } from '../../price-fetch/price-fetch';
 import { TransactionRoute, detectRoute, validateRouteParams } from '../route-detector';
 import { getCEAAddress, chainSupportsOutbound } from '../cea-utils';
 import { buildSvmPayloadFromParams } from '../svm-idl/build-payload';
+import { encodeSvmExecutePayload } from '../payload-builders';
+import { buildPC20SvmCeaBurnPayload } from './pc20/svm';
+import { deriveSvmCeaPda, deriveAtaPubkey } from './svm-rent';
 import { hasExecutablePayloadData } from '../data-utils';
 import {
   buildExecuteMulticall,
@@ -90,6 +93,7 @@ import { PushChain } from '../../push-chain/push-chain';
 import type {
   ChainTarget,
   ExecuteParams,
+  LegacyExecuteParams,
   MultiCall,
   UniversalExecuteParams,
   UniversalOutboundTxRequest,
@@ -233,6 +237,12 @@ function resolveR2Prc20TokenSvm(
   let burnAmount = BigInt(0);
 
   if (params.funds?.amount) {
+    // PC20 export: the locked token IS the Push-native PC20 — no synthetic
+    // PRC20 lookup. Mirrors the EVM branch in resolveR2Prc20TokenEvm.
+    const pc20 = (params as { _pc20?: { pushAddress: `0x${string}` } })._pc20;
+    if (pc20) {
+      return { prc20Token: pc20.pushAddress, burnAmount: params.funds.amount };
+    }
     const token = (params.funds as { token: MoveableToken }).token;
     if (token) {
       prc20Token = PushChain.utils.tokens.getPRC20Address(token).address;
@@ -272,7 +282,15 @@ function resolveR3SvmDrain(
   if (params.funds?.amount && params.funds.amount > BigInt(0)) {
     drainAmount = params.funds.amount;
     const token = (params.funds as { token?: MoveableToken }).token;
-    if (token?.mechanism === 'approve') {
+    const pc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+    if (pc20?.direction === 'import' && token) {
+      // PC20 CEA burn: the drained token is the wrapper mint. The outbound
+      // relay leg stays on the native PRC-20 (it is a payload relay, not a
+      // PC20 export), so prc20Token is left as initialized above.
+      const mintPk = new PublicKey(token.address);
+      tokenMintHex = ('0x' + Buffer.from(mintPk.toBytes()).toString('hex')) as `0x${string}`;
+      splMintBase58 = token.address;
+    } else if (token?.mechanism === 'approve') {
       const mintPk = new PublicKey(token.address);
       tokenMintHex = ('0x' + Buffer.from(mintPk.toBytes()).toString('hex')) as `0x${string}`;
       splMintBase58 = token.address;
@@ -292,9 +310,19 @@ function buildR3SvmExtraPayload(
   sourceChain: CHAIN,
   inboundNonce?: bigint
 ): Uint8Array | undefined {
+  // PC20: the unlocked Push-native token lands on the UEA (program-enforced
+  // recipient), so a funds-only burn whose destination differs needs a
+  // Push-side forward — same rule as the EVM R3 branch.
+  const extraPc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+  // Always forward for PC20 funds — a payload-less burn emits a selector-only
+  // raw_payload that the chain hard-fails (see the R3 EVM branch note).
+  const pc20Forward =
+    extraPc20?.direction === 'import' && Boolean(params.funds?.amount);
+
   const shouldBuildPushPayload =
     hasExecutablePayloadData(params.data) ||
-    Boolean(params.funds?.amount && (params.value ?? BigInt(0)) > BigInt(0));
+    Boolean(params.funds?.amount && (params.value ?? BigInt(0)) > BigInt(0)) ||
+    pc20Forward;
 
   if (!shouldBuildPushPayload) {
     return undefined;
@@ -1039,6 +1067,98 @@ export async function executeUoaToCeaSvm(
   }
   assertSvmPayloadWithinRelayLimit(svmPayload, `Route 2 SVM ${targetChain}`);
 
+  // --- PC20 export to Solana ---
+  // The destination wrapper is the deterministic pc20_mint PDA; resolving it
+  // here (pre-approval) also tells us whether this is a first export, which
+  // drives the rent floor below. The generic SVM payload is replaced by the
+  // PC20 payload: selector || abi(namespace,name,symbol,decimals) || userData.
+  //
+  // v1 ships funds-only with EMPTY userData: settlement mints into the
+  // sender's CEA ATA (pc20.rs id=5 mints to cea_ata and only userData moves
+  // funds onward — and a recipient ATA cannot exist before the mint does on a
+  // first export). Tokens in the CEA ATA remain under the sender's control and
+  // are retrievable via the existing R2 execute path. Recipient-ATA delivery
+  // userData lands with the repeat-export policy.
+  const svmPc20Descriptor = (params as { _pc20?: ResolvedPC20 })._pc20;
+  const isSvmPc20Export = svmPc20Descriptor?.direction === 'export';
+  let svmPc20FirstExport = false;
+  let pc20SvmPayload = svmPayload;
+  let pc20TargetBytes = targetBytes;
+  if (isSvmPc20Export && svmPc20Descriptor) {
+    const { wrapper } = await validatePC20Export(
+      ctx,
+      svmPc20Descriptor,
+      targetChain,
+      { network: ctx.pushNetwork, rpcUrls: ctx.rpcUrls }
+    );
+    svmPc20FirstExport = !wrapper.deployed;
+
+    // Delivery: settlement mints into the CEA ATA and CPIs exactly one
+    // instruction from userData. When the recipient's ATA for the wrapper
+    // mint already exists, that instruction is an SPL TransferChecked to it.
+    // Otherwise userData stays empty and funds land in the sender's CEA ATA
+    // (retrievable via R2 execute) — a first export can never deliver, since
+    // an ATA cannot exist before its mint does.
+    let deliveryUserData: `0x${string}` = '0x';
+    let deliveryNote = 'funds-only → CEA ATA';
+    if (wrapper.deployed) {
+      try {
+        const { PublicKey, Connection } = await import('@solana/web3.js');
+        const { buildPC20SvmDeliveryFields } = await import('./pc20/svm');
+        const mint = new PublicKey(wrapper.address);
+        const ceaAuthority = deriveSvmCeaPda(ueaAddress);
+        const recipientPk = new PublicKey(
+          Buffer.from((targetAddress as string).slice(2), 'hex')
+        );
+        const recipientAta = deriveAtaPubkey(recipientPk, mint);
+        const rpc =
+          ctx.rpcUrls[targetChain]?.[0] ?? CHAIN_INFO[targetChain].defaultRPC[0];
+        // 'confirmed' commitment: an ATA created moments ago must count.
+        // Settlement lands ~a minute later, so anything confirmed now is
+        // final long before the CPI runs; probing at 'finalized' would
+        // misroute fresh ATAs to the CEA fallback.
+        const ataInfo = await new Connection(rpc, 'confirmed').getAccountInfo(recipientAta);
+        if (ataInfo) {
+          const fields = buildPC20SvmDeliveryFields({
+            mint,
+            ceaAta: deriveAtaPubkey(ceaAuthority, mint),
+            recipientAta,
+            ceaAuthority,
+            // The PC20 gate guarantees funds.amount > 0 for an export;
+            // resolveR2Prc20TokenSvm (which defines burnAmount) runs later.
+            amount: params.funds!.amount,
+            decimals: svmPc20Descriptor.decimals,
+          });
+          deliveryUserData = encodeSvmExecutePayload(fields);
+          deliveryNote = `delivering to recipient ATA ${recipientAta.toBase58()}`;
+        } else {
+          deliveryNote = `recipient ATA ${recipientAta.toBase58()} missing → CEA ATA`;
+        }
+      } catch (err) {
+        // Delivery is an optimization, not a requirement — funds in the CEA
+        // ATA stay under the sender's control. Never fail the export over it.
+        deliveryNote = `ATA probe failed (${err instanceof Error ? err.message : String(err)}) → CEA ATA`;
+      }
+    }
+
+    pc20SvmPayload = buildPC20ExportPayload({
+      destinationChain: targetChain,
+      name: svmPc20Descriptor.name,
+      symbol: svmPc20Descriptor.symbol,
+      decimals: svmPc20Descriptor.decimals,
+      destinationUserData: deliveryUserData,
+    });
+    // Outbound recipient: the requested Solana address (0x-hex 32B, already
+    // normalized by the route detector). The validator parses it as a pubkey
+    // for the id=5 TSS message.
+    pc20TargetBytes = targetAddress as `0x${string}`;
+    printLog(
+      ctx,
+      `executeUoaToCeaSvm — PC20 export: wrapper mint ${wrapper.address} ` +
+        `(${wrapper.deployed ? 'exists' : 'first export'}), ${deliveryNote}`
+    );
+  }
+
   // --- Determine PRC-20 token and burn amount (chain-local, pre-203) ---
   const { prc20Token, burnAmount } = resolveR2Prc20TokenSvm(
     params,
@@ -1083,7 +1203,11 @@ export async function executeUoaToCeaSvm(
   if (prc20Token !== (ZERO_ADDRESS as `0x${string}`)) {
     fireProgressHook(ctx, PROGRESS_HOOK.SEND_TX_202_01, targetChain);
     try {
-      let result = await queryOutboundGasFee(ctx, prc20Token, effectiveGasLimit, targetChain);
+      // PC20 exports quote via getPC20ExportGasAndFees — the only quote that
+      // includes first-export overhead (mint + state + ATA rent on Solana).
+      let result = isSvmPc20Export
+        ? await queryPC20OutboundGasFee(ctx, prc20Token, effectiveGasLimit, targetChain)
+        : await queryOutboundGasFee(ctx, prc20Token, effectiveGasLimit, targetChain);
       result = await ensureSvmFinalizeGasBudgetQuote({
         ctx,
         ueaAddress,
@@ -1093,6 +1217,16 @@ export async function executeUoaToCeaSvm(
         splMintBase58,
         burnAmount,
         pathTag: 'executeUoaToCeaSvm',
+        // PC20: id=5 rent floor (CEA ATA + mint/state on first export), and the
+        // bump path must re-quote via getPC20ExportGasAndFees — the default
+        // requote reverts for a token with no PRC20 config.
+        ...(isSvmPc20Export
+          ? {
+              pc20: { isFirstExport: svmPc20FirstExport },
+              requoteFn: (gl: bigint) =>
+                queryPC20OutboundGasFee(ctx, prc20Token, gl, targetChain),
+            }
+          : {}),
       });
       gasFee = result.gasFee;
       protocolFeeSvm = result.protocolFee;
@@ -1142,11 +1276,11 @@ export async function executeUoaToCeaSvm(
   // --- Build outbound request ---
   // targetBytes: for execute = program id (resolver output); for withdraw = to.address
   const outboundReq: UniversalOutboundTxRequest = buildOutboundRequest(
-    targetBytes,
+    pc20TargetBytes,
     prc20Token,
     burnAmount,
     effectiveGasLimit,
-    svmPayload,
+    pc20SvmPayload,
     ueaAddress, // revert recipient is the UEA
     params.maxPCForGas ?? BigInt(0)
   );
@@ -1461,16 +1595,41 @@ export async function executeCeaToPush(
   // The relay expects a full UniversalPayload struct (to, value, data, gasLimit, ...),
   // where `data` contains the multicall payload (with UEA_MULTICALL_SELECTOR prefix).
   let pushPayload: `0x${string}` = '0x';
+  // PC20: the chain unlocks the Push-native token to the UEA (unlockPC20 →
+  // in.Recipient, which the CEA sets to its bound UEA), so a funds-only R3
+  // whose destination is NOT the UEA needs a Push-side transfer to forward
+  // it. PRC20 R3 has the same land-on-UEA semantics; PC20 just makes the
+  // forwarding explicit here because the resolved descriptor lets us.
+  const r3Pc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+  // ALWAYS build the forward for PC20 funds — even when the destination is the
+  // UEA itself (an explicit self-transfer). Two reasons:
+  //   1. semantics: the transfer states where funds go instead of relying on
+  //      the unlock's implicit landing spot;
+  //   2. survival: a payload-less PC20 burn produces a selector-only
+  //      raw_payload, which the chain classifies FUNDS_AND_PAYLOAD and then
+  //      hard-fails decoding ("raw_payload decoded to nil" —
+  //      StripSelector yields "0x", the != "" guard admits it). Until that is
+  //      fixed chain-side, an empty R3 PC20 payload bricks the inbound with
+  //      the wrapper already burned.
+  const r3Pc20NeedsForward =
+    r3Pc20?.direction === 'import' && Boolean(params.funds?.amount);
   if (
     hasExecutablePayloadData(params.data) ||
-    (params.funds?.amount && (params.value ?? BigInt(0)) > BigInt(0))
+    (params.funds?.amount && (params.value ?? BigInt(0)) > BigInt(0)) ||
+    r3Pc20NeedsForward
   ) {
     const multicallData = buildExecuteMulticall({
       execute: {
         to: pushDestination,
         value: params.value,
         data: params.data,
-      },
+        // Funds + descriptor let the builder emit the Push-native PC20
+        // transfer (its _pc20 branch); omitted for non-PC20 to keep the
+        // existing PRC20 payload byte-identical.
+        ...(r3Pc20NeedsForward
+          ? { funds: params.funds, _pc20: r3Pc20 }
+          : {}),
+      } as LegacyExecuteParams,
       ueaAddress,
       allowSelfValueCall: true,
     });
@@ -1895,19 +2054,53 @@ export async function executeCeaToPushSvm(
     ueaBalance = balance;
   }
 
-  const svmPayload = encodeSvmCeaToUeaPayload({
-    gatewayProgramHex,
-    drainAmount,
-    tokenMintHex,
-    extraPayload: buildR3SvmExtraPayload(
+  // PC20 CEA burn uses a different self-call than the SPL drain: the payload
+  // targets `send_universal_tx` (not `send_universal_tx_to_uea`) with the
+  // program-enforced account set, and the finalize dispatcher routes it to
+  // route_pc20_burn_from_finalize_cea. The unlocked Push-native token always
+  // lands on the UEA (recipient == push_account is enforced on-chain);
+  // forwarding to a different destination rides in the push payload.
+  const r3SvmPc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+  let svmPayload: `0x${string}`;
+  if (r3SvmPc20?.direction === 'import' && drainAmount > BigInt(0)) {
+    const mintPk = new PublicKey(r3SvmPc20.originAddress);
+    const ceaAta = deriveAtaPubkey(ceaPda, mintPk);
+    const extra = buildR3SvmExtraPayload(
       ctx,
       params,
       ueaAddress,
       sourceChain,
       ueaNonce + BigInt(1)
-    ),
-    revertRecipientHex: ceaPdaHex,
-  });
+    );
+    const fields = buildPC20SvmCeaBurnPayload({
+      gatewayProgram: programPk,
+      mint: mintPk,
+      ceaAuthority: ceaPda,
+      ceaAta,
+      ueaAddress,
+      amount: drainAmount,
+      pushPayload: extra ?? new Uint8Array(0),
+    });
+    svmPayload = encodeSvmExecutePayload(fields);
+    printLog(
+      ctx,
+      `executeCeaToPushSvm — PC20 burn: mint ${mintPk.toBase58()}, ceaAta ${ceaAta.toBase58()}`
+    );
+  } else {
+    svmPayload = encodeSvmCeaToUeaPayload({
+      gatewayProgramHex,
+      drainAmount,
+      tokenMintHex,
+      extraPayload: buildR3SvmExtraPayload(
+        ctx,
+        params,
+        ueaAddress,
+        sourceChain,
+        ueaNonce + BigInt(1)
+      ),
+      revertRecipientHex: ceaPdaHex,
+    });
+  }
   assertSvmPayloadWithinRelayLimit(
     svmPayload,
     `Route 3 SVM ${sourceChain}`

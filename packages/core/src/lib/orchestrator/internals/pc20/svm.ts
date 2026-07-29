@@ -177,12 +177,22 @@ export function buildPC20BurnAccounts(params: {
   programId: PublicKey;
   mint: PublicKey;
 }): {
-  remainingAccounts: PublicKey[];
+  remainingAccounts: Array<{
+    pubkey: PublicKey;
+    isSigner: boolean;
+    isWritable: boolean;
+  }>;
   gatewayTokenAccount: null;
 } {
   const { state } = derivePC20State(params.programId, params.mint);
   return {
-    remainingAccounts: [state, params.mint],
+    // Flags per route_pc20_universal_tx (deposit.rs): the state is read-only,
+    // the mint must be writable (it is burned against), and neither may sign —
+    // the program rejects any deviation, so these are load-bearing.
+    remainingAccounts: [
+      { pubkey: state, isSigner: false, isWritable: false },
+      { pubkey: params.mint, isSigner: false, isWritable: true },
+    ],
     gatewayTokenAccount: null,
   };
 }
@@ -200,6 +210,150 @@ export function predictSvmWrapperMint(
   pushPC20Address: string
 ): PublicKey {
   return derivePC20Mint(programId, pushPC20Address).mint;
+}
+
+/**
+ * Delivery instruction for a repeat export: SPL `TransferChecked` moving the
+ * freshly minted wrapper from the CEA ATA to the recipient's ATA.
+ *
+ * Settlement (`pc20.rs` id=5) mints into the CEA ATA and then CPIs exactly one
+ * instruction from the userData, signed by the CEA PDA — so delivery IS this
+ * one transfer. The signer flag is not encoded: `invoke_signed_gateway_instruction`
+ * marks whichever account equals the CEA authority as the signer.
+ *
+ * Only valid when the recipient ATA already exists — SPL transfers do not
+ * create destination accounts, and a failed CPI fails the whole settlement
+ * with the source already locked. Callers must verify existence first; on a
+ * first export the ATA cannot exist (its mint doesn't yet), so this is
+ * strictly a repeat-export tool.
+ */
+export function buildPC20SvmDeliveryFields(params: {
+  mint: PublicKey;
+  ceaAta: PublicKey;
+  recipientAta: PublicKey;
+  ceaAuthority: PublicKey;
+  amount: bigint;
+  decimals: number;
+}): {
+  targetProgram: `0x${string}`;
+  accounts: Array<{ pubkey: `0x${string}`; isWritable: boolean }>;
+  ixData: Uint8Array;
+  instructionId: 2;
+} {
+  // SPL Token TransferChecked: index 12, data = u8 || u64 LE amount || u8 decimals.
+  const ixData = new Uint8Array(10);
+  ixData[0] = 12;
+  new DataView(ixData.buffer).setBigUint64(1, params.amount, true);
+  ixData[9] = params.decimals;
+
+  const hex = (k: PublicKey): `0x${string}` =>
+    `0x${Buffer.from(k.toBytes()).toString('hex')}` as `0x${string}`;
+
+  return {
+    targetProgram: hex(SPL_TOKEN_PROGRAM_ID),
+    accounts: [
+      { pubkey: hex(params.ceaAta), isWritable: true }, // source
+      { pubkey: hex(params.mint), isWritable: false }, // mint (checked)
+      { pubkey: hex(params.recipientAta), isWritable: true }, // destination
+      { pubkey: hex(params.ceaAuthority), isWritable: false }, // owner → CPI signer
+    ],
+    ixData,
+    instructionId: 2,
+  };
+}
+
+/** SPL Token program. */
+export const SPL_TOKEN_PROGRAM_ID = new PublicKey(
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+);
+
+
+/**
+ * R3 (CEA → Push) burn payload: the outbound's execute-payload making the CEA
+ * self-call `send_universal_tx` to burn wrapper tokens it holds.
+ *
+ * The finalize dispatcher detects this shape (`execute.rs:511`:
+ * target == gateway && `is_pc20_burn_ix`) and routes to
+ * `route_pc20_burn_from_finalize_cea`, which enforces:
+ *   - ix_data = discriminator("global:send_universal_tx") || Borsh
+ *     `SendUniversalTxIxArgs { req, native_amount }` with native_amount == 0;
+ *   - `req.recipient == push_account` — the unlocked token goes to the CEA's
+ *     bound UEA on Push, nowhere else (forwarding happens via `req.payload`);
+ *   - payload accounts exactly `[pc20_state ro, pc20_mint w, cea_ata w,
+ *     token_program ro]` (`parse_pc20_cea_burn_accounts`).
+ *
+ * The revert recipient is the CEA PDA: a failed inbound re-mints the wrapper
+ * back to the CEA (`revert.rs` PC20 branch), restoring the pre-burn state.
+ */
+export function buildPC20SvmCeaBurnPayload(params: {
+  gatewayProgram: PublicKey;
+  mint: PublicKey;
+  ceaAuthority: PublicKey;
+  ceaAta: PublicKey;
+  /** 20-byte UEA (the CEA's push_account) — program-enforced recipient. */
+  ueaAddress: `0x${string}`;
+  amount: bigint;
+  /** Push-side UniversalPayload bytes executed after the unlock (may be empty). */
+  pushPayload: Uint8Array;
+}): {
+  targetProgram: `0x${string}`;
+  accounts: Array<{ pubkey: `0x${string}`; isWritable: boolean }>;
+  ixData: Uint8Array;
+  instructionId: 2;
+} {
+  const { state } = derivePC20State(params.gatewayProgram, params.mint);
+
+  // Anchor discriminator: first 8 bytes of SHA-256("global:send_universal_tx").
+  const discriminator = sha256(
+    new TextEncoder().encode('global:send_universal_tx')
+  ).subarray(0, 8);
+
+  const recipient = Buffer.from(params.ueaAddress.slice(2), 'hex');
+  if (recipient.length !== 20) {
+    throw new InvalidPC20AddressError('UEA must be a 20-byte address.', {
+      address: params.ueaAddress,
+    });
+  }
+
+  // Borsh SendUniversalTxIxArgs { req: UniversalTxRequest, native_amount: u64 }
+  // req: recipient [u8;20] || token [32] || amount u64 LE || payload Vec<u8>
+  //      || revert_recipient [32] || signature_data Vec<u8>   (state.rs:67)
+  const payloadLen = params.pushPayload.length;
+  const ixData = new Uint8Array(8 + 20 + 32 + 8 + 4 + payloadLen + 32 + 4 + 8);
+  const view = new DataView(ixData.buffer);
+  let o = 0;
+  ixData.set(discriminator, o); o += 8;
+  ixData.set(recipient, o); o += 20;
+  ixData.set(params.mint.toBytes(), o); o += 32;
+  view.setBigUint64(o, params.amount, true); o += 8;
+  view.setUint32(o, payloadLen, true); o += 4; // Borsh Vec<u8>: u32 LE length
+  ixData.set(params.pushPayload, o); o += payloadLen;
+  // Revert re-mints to the CEA, restoring pre-burn state.
+  ixData.set(params.ceaAuthority.toBytes(), o); o += 32;
+  view.setUint32(o, 0, true); o += 4; // signature_data: empty Vec<u8>
+  view.setBigUint64(o, BigInt(0), true); // native_amount: must be 0
+
+  const hex = (k: PublicKey): `0x${string}` =>
+    `0x${Buffer.from(k.toBytes()).toString('hex')}` as `0x${string}`;
+
+  return {
+    targetProgram: hex(params.gatewayProgram),
+    accounts: [
+      { pubkey: hex(state), isWritable: false },
+      { pubkey: hex(params.mint), isWritable: true },
+      { pubkey: hex(params.ceaAta), isWritable: true },
+      { pubkey: hex(SPL_TOKEN_PROGRAM_ID), isWritable: false },
+    ],
+    ixData,
+    instructionId: 2,
+  };
+}
+
+/** Minimal sha256 over bytes, returned as bytes. */
+function sha256(data: Uint8Array): Buffer {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { createHash } = require('crypto') as typeof import('crypto');
+  return createHash('sha256').update(data).digest();
 }
 
 /** Normalize a Push-native EVM address into the 20 raw bytes used as a seed. */

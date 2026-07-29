@@ -1,10 +1,11 @@
 /**
  * Resolver tests against a scripted RPC.
  *
- * `viem`'s public client is mocked at the transport boundary rather than the
- * client boundary so `multicall` batching is exercised for real — the
- * round-trip budget assertions would be meaningless against a mocked
- * `multicall()`.
+ * `readContract` is scripted per call. The resolver relies on viem's
+ * transport-level JSON-RPC batching (Multicall3 is NOT deployed on Push Chain),
+ * so "one round trip" is counted at `batchRead` rather than inferred from a
+ * mocked `multicall()`. `batchCalls` below counts batches; `contractReads`
+ * counts individual calls within them.
  */
 
 import { CHAIN, PUSH_NETWORK, VM } from '../../../../constants/enums';
@@ -30,10 +31,10 @@ type Script = {
 };
 
 let script: Script = {};
-let multicallCalls = 0;
-let singleReads = 0;
-/** Namespaces passed to getPC20Source in the most recent batch. */
-let lastProbedNamespaces: string[] = [];
+/** Individual contract calls, regardless of batching. */
+let contractReads = 0;
+/** Namespaces passed to getPC20Source. */
+let probedNamespacesThisBatch: string[] = [];
 
 // Lowercase fixtures. Mixed-case addresses are checksum-validated, so an
 // arbitrary `0xAaAa…` literal is (correctly) rejected as a typo.
@@ -49,69 +50,50 @@ const ZERO32 = ('0x' + '0'.repeat(64)) as `0x${string}`;
 jest.mock('viem', () => {
   const actual = jest.requireActual('viem');
 
-  const resolveOne = (c: { functionName: string }) => {
+  const resolveOne = (c: { functionName: string; args?: unknown[] }) => {
+    const args = c.args ?? [];
     switch (c.functionName) {
-      case 'getPC20Source':
-        return script.source
-          ? { status: 'success', result: [script.source[0], script.source[1]] }
-          : { status: 'success', result: [ZERO, false] };
-      case 'getPC20Wrapper':
+      case 'getPC20Source': {
+        if (script.sourceByNamespace) {
+          const hit = script.sourceByNamespace[args[1] as string];
+          return hit ? [hit[0], hit[1]] : [ZERO, false];
+        }
+        return script.source ? [script.source[0], script.source[1]] : [ZERO, false];
+      }
+      case 'getPC20Wrapper': {
+        if (script.wrappersByNamespace) {
+          const hit = script.wrappersByNamespace[args[1] as string];
+          return hit ? [pad(hit[0]), hit[1]] : [ZERO32, false];
+        }
         return script.wrapper
-          ? {
-              status: 'success',
-              result: [
-                script.wrapper[0] === ZERO ? ZERO32 : pad(script.wrapper[0]),
-                script.wrapper[1],
-              ],
-            }
-          : { status: 'success', result: [ZERO32, false] };
+          ? [script.wrapper[0] === ZERO ? ZERO32 : pad(script.wrapper[0]), script.wrapper[1]]
+          : [ZERO32, false];
+      }
       case 'pc20Metadata':
-        return script.metadata && script.metadata !== 'revert'
-          ? { status: 'success', result: script.metadata }
-          : { status: 'failure', error: new Error('reverted') };
+        if (script.metadata && script.metadata !== 'revert') return script.metadata;
+        throw new Error('reverted');
       case 'CHAIN_NAMESPACE':
-        return script.prc20Namespace
-          ? { status: 'success', result: script.prc20Namespace }
-          : { status: 'failure', error: new Error('reverted') };
+        if (script.prc20Namespace) return script.prc20Namespace;
+        throw new Error('reverted');
+      case 'universalCore':
+        return UNIVERSAL_CORE;
       default:
-        return { status: 'failure', error: new Error('unscripted') };
+        throw new Error(`unscripted call: ${c.functionName}`);
     }
   };
 
   return {
     ...actual,
     createPublicClient: () => ({
-      multicall: async ({ contracts }: { contracts: { functionName: string; args: unknown[] }[] }) => {
-        multicallCalls += 1;
-        const probed = contracts
-          .filter((c) => c.functionName === 'getPC20Source')
-          .map((c) => c.args[1] as string);
-        if (probed.length > 0) lastProbedNamespaces = probed;
-
-        return contracts.map((c) => {
-          if (c.functionName === 'getPC20Wrapper' && script.wrappersByNamespace) {
-            const ns = c.args[1] as string;
-            const hit = script.wrappersByNamespace[ns];
-            return hit
-              ? { status: 'success', result: [pad(hit[0]), hit[1]] }
-              : { status: 'success', result: [ZERO32, false] };
-          }
-          if (c.functionName === 'getPC20Source' && script.sourceByNamespace) {
-            const ns = c.args[1] as string;
-            const hit = script.sourceByNamespace[ns];
-            return hit
-              ? { status: 'success', result: [hit[0], hit[1]] }
-              : { status: 'success', result: [ZERO, false] };
-          }
-          return resolveOne(c);
-        });
-      },
-      readContract: async () => {
-        singleReads += 1;
-        return UNIVERSAL_CORE;
+      readContract: async (c: { functionName: string; args?: unknown[] }) => {
+        contractReads += 1;
+        if (c.functionName === 'getPC20Source') {
+          probedNamespacesThisBatch.push((c.args?.[1] as string) ?? '');
+        }
+        return resolveOne(c);
       },
       getCode: async () => {
-        singleReads += 1;
+        contractReads += 1;
         return script.code ?? '0x60006000';
       },
     }),
@@ -149,9 +131,8 @@ const validMetadata = (): [string, string, number, string] => [
 
 beforeEach(() => {
   script = {};
-  multicallCalls = 0;
-  singleReads = 0;
-  lastProbedNamespaces = [];
+  contractReads = 0;
+  probedNamespacesThisBatch = [];
   __clearPC20Caches();
 });
 
@@ -198,10 +179,10 @@ describe('resolveWrapperToSource', () => {
     script.wrapper = [WRAPPER, true];
 
     await resolveWrapperToSource(CHAIN_UNDER_TEST, WRAPPER, OPTS);
-    const after = multicallCalls;
+    const after = contractReads;
     await resolveWrapperToSource(CHAIN_UNDER_TEST, WRAPPER, OPTS);
 
-    expect(multicallCalls).toBe(after);
+    expect(contractReads).toBe(after);
   });
 
   it('does not cache negative results', async () => {
@@ -211,13 +192,13 @@ describe('resolveWrapperToSource', () => {
     await expect(
       resolveWrapperToSource(CHAIN_UNDER_TEST, WRAPPER, OPTS)
     ).rejects.toThrow();
-    const afterFirst = multicallCalls;
+    const afterFirst = contractReads;
 
     script.source = [PUSH_PC20, true];
     script.wrapper = [WRAPPER, true];
     const result = await resolveWrapperToSource(CHAIN_UNDER_TEST, WRAPPER, OPTS);
 
-    expect(multicallCalls).toBeGreaterThan(afterFirst);
+    expect(contractReads).toBeGreaterThan(afterFirst);
     expect(result.pushAddress.toLowerCase()).toBe(PUSH_PC20.toLowerCase());
   });
 
@@ -317,17 +298,19 @@ describe('listPC20Deployments', () => {
     expect(deployments[0].address.toLowerCase()).toBe(WRAPPER);
   });
 
-  it('issues exactly one multicall regardless of chain count', async () => {
+  it('issues exactly one batched round trip regardless of chain count', async () => {
     script.wrappersByNamespace = {
       [chainToNamespace(CHAIN.ETHEREUM_SEPOLIA)]: [WRAPPER, true],
     };
 
     // Warm the UniversalCore pointer so it is not counted here.
     await listPC20Deployments(PUSH_PC20, { ...OPTS, chains: [CHAIN.BNB_TESTNET] });
-    multicallCalls = 0;
+    __readCount.n = 0;
 
     await listPC20Deployments(PUSH_PC20, OPTS); // every supported external chain
-    expect(multicallCalls).toBe(1);
+    // One batch, however many chains — the reads all target UniversalCore on
+    // Push and the batching transport coalesces them into one HTTP round trip.
+    expect(__readCount.n).toBe(1);
   });
 
   it('returns an empty list rather than throwing for a never-exported token', async () => {
@@ -397,8 +380,8 @@ describe('discoverPC20Chain', () => {
     await discoverPC20Chain(WRAPPER, OPTS);
 
     // Every namespace probed in the single batch must be EVM.
-    expect(lastProbedNamespaces.length).toBeGreaterThan(0);
-    expect(lastProbedNamespaces.every((ns) => ns.startsWith('eip155:'))).toBe(true);
+    expect(probedNamespacesThisBatch.length).toBeGreaterThan(0);
+    expect(probedNamespacesThisBatch.every((ns) => ns.startsWith('eip155:'))).toBe(true);
   });
 });
 

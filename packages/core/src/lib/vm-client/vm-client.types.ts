@@ -54,6 +54,16 @@ export interface WriteContractParams extends ReadContractParams {
    * **For Solana only** Keypairs that should sign the transaction
    */
   extraSigners?: Keypair[];
+  /**
+   * **For Solana only** Positional accounts appended after the instruction's
+   * named accounts. Order and flags are program-defined — e.g. the PC20 burn
+   * requires exactly `[pc20_state readonly, pc20_mint writable]`.
+   */
+  remainingAccounts?: Array<{
+    pubkey: PublicKey;
+    isSigner: boolean;
+    isWritable: boolean;
+  }>;
 }
 
 export type TxResponse = Transaction & {

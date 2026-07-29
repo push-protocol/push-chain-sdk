@@ -41,6 +41,7 @@ import { waitForEvmConfirmationsWithCountdown, waitForSvmConfirmationsWithCountd
 import { queryUniversalTxStatusFromGatewayTx } from './response-builder';
 import { extractPcTxAndTransform, PushChainExecutionError } from './push-chain-tx';
 import { buildSvmUniversalTxRequest, getSvmProtocolFee } from './svm-helpers';
+import { buildPC20BurnAccounts } from './pc20/svm';
 import { fetchOriginChainTransactionForProgress } from './helpers';
 import type { ResponseBuilderCallbacks } from './response-builder';
 import { transformToUniversalTxResponse } from './response-builder';
@@ -404,6 +405,40 @@ async function executeFundsOnlySvm(
         rateLimitConfig: rateLimitConfigPda, tokenRateLimit: tokenRateLimitPda,
         systemProgram: SystemProgram.programId,
       },
+    });
+  } else if (execute.funds!.token!.mechanism === 'pc20-burn') {
+    // PC20 wrapper burn — route_pc20_universal_tx (deposit.rs). Differs from
+    // the SPL escrow route in three program-enforced ways: the recipient must
+    // be the nonzero Push recipient (the chain unlocks directly to it), the
+    // gateway token account must be ABSENT (burn, not escrow), and
+    // remaining_accounts must be exactly [pc20_state ro, pc20_mint w]. The
+    // gateway prepends the PC20 selector itself — the SDK must not.
+    const mintPk = new PublicKey(execute.funds!.token!.address);
+    const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+    const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+    const userAta = PublicKey.findProgramAddressSync(
+      [userPk.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mintPk.toBuffer()], ASSOCIATED_TOKEN_PROGRAM_ID
+    )[0];
+    const [tokenRateLimitPda] = PublicKey.findProgramAddressSync(
+      [stringToBytes('rate_limit'), mintPk.toBuffer()], programId
+    );
+    const { remainingAccounts } = buildPC20BurnAccounts({ programId, mint: mintPk });
+
+    const reqBurn = buildSvmUniversalTxRequest({
+      recipient: recipientEvm20, token: mintPk, amount: bridgeAmount,
+      payload: '0x', revertRecipient: userPk, signatureData: '0x',
+    });
+    txSignature = await svmClient.writeContract({
+      abi: SVM_GATEWAY_IDL, address: programId.toBase58(), functionName: 'sendUniversalTx',
+      args: [reqBurn, protocolFeeLamports], signer: ctx.universalSigner,
+      accounts: {
+        config: configPda, vault: vaultPda, feeVault: feeVaultPda,
+        userTokenAccount: userAta, gatewayTokenAccount: null as never, user: userPk,
+        tokenProgram: TOKEN_PROGRAM_ID, priceUpdate: priceUpdatePk,
+        rateLimitConfig: rateLimitConfigPda, tokenRateLimit: tokenRateLimitPda,
+        systemProgram: SystemProgram.programId,
+      },
+      remainingAccounts,
     });
   } else {
     throw new Error('Unsupported token mechanism on Solana');

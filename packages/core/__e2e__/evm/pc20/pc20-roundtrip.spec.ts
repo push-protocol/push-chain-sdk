@@ -11,7 +11,12 @@ import '@e2e/shared/setup';
 import { PushChain } from '../../../src';
 import { PUSH_NETWORK, CHAIN } from '../../../src/lib/constants/enums';
 import { createEvmPushClient } from '@e2e/shared/evm-client';
-import { getPC20Fixtures, announcePC20Skip } from '@e2e/shared/pc20-fixtures';
+import {
+  getPC20Fixtures,
+  announcePC20Skip,
+  waitToleratingFeeCreditBug,
+  sendToleratingFeeCreditBug,
+} from '@e2e/shared/pc20-fixtures';
 import { ERC20_EVM } from '../../../src/lib/constants/abi/erc20.evm';
 import { createPublicClient, http, getAddress } from 'viem';
 import { CHAIN_INFO } from '../../../src/lib/constants/chain';
@@ -41,10 +46,14 @@ d('PC20 round trip — Push to EVM and back', () => {
       args: [owner],
     }) as Promise<bigint>;
 
+  // The SDK's ERC20_EVM ABI omits totalSupply; minimal inline ABI.
+  const SUPPLY_ABI = [
+    { type: 'function', name: 'totalSupply', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  ] as const;
   const totalSupply = (chain: CHAIN, token: string) =>
     read(chain).readContract({
       address: getAddress(token),
-      abi: ERC20_EVM,
+      abi: SUPPLY_ABI,
       functionName: 'totalSupply',
       args: [],
     }) as Promise<bigint>;
@@ -102,18 +111,19 @@ d('PC20 round trip — Push to EVM and back', () => {
     expect(wrapperAfterExport).toBeGreaterThanOrEqual(AMOUNT);
 
     // --- Leg 2: return ----------------------------------------------------
-    const returnTx = await client.universal.sendTransaction({
-      to: ueaAddress,
-      funds: {
-        amount: AMOUNT,
-        token: {
-          standard: 'pc20',
-          chain: destChain(),
-          address: wrapper,
+    await sendToleratingFeeCreditBug(() =>
+      client.universal.sendTransaction({
+        to: ueaAddress,
+        funds: {
+          amount: AMOUNT,
+          token: {
+            standard: 'pc20',
+            chain: destChain(),
+            address: wrapper,
+          },
         },
-      },
-    });
-    await returnTx.wait();
+      })
+    );
 
     const pushFinal = await balanceOf(
       CHAIN.PUSH_TESTNET_DONUT,

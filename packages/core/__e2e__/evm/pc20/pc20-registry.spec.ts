@@ -14,19 +14,35 @@ import {
   PC20WrapperNotRegisteredError,
   InvalidPC20AddressError,
 } from '../../../src/lib/orchestrator/internals/pc20/errors';
-import { getPC20Fixtures, announcePC20Skip } from '@e2e/shared/pc20-fixtures';
+import {
+  getPC20ReadFixtures,
+  announcePC20Skip,
+} from '@e2e/shared/pc20-fixtures';
 
-const fixtures = getPC20Fixtures();
+// Read-only: no signer needed, nothing is broadcast.
+const fixtures = getPC20ReadFixtures();
 const d = fixtures ? describe : describe.skip;
 
-announcePC20Skip('PC20 registry');
+/**
+ * Wrapper-dependent tests are registered as `it.skip` when no wrapper exists
+ * yet.
+ *
+ * An early `return` inside a test body would report as PASSED while asserting
+ * nothing — indistinguishable from a real pass in CI, which is the precise
+ * failure this suite exists to avoid. Choosing the runner up front makes jest
+ * report them as skipped.
+ */
+const itWrapper = fixtures?.wrapperSepolia ? it : it.skip;
+const itUndeployed = fixtures?.undeployedToken ? it : it.skip;
+
+announcePC20Skip('PC20 registry', false);
 
 d('PC20 registry — getPC20Address', () => {
   const opts = { network: PUSH_NETWORK.TESTNET_DONUT };
 
-  it('resolves a wrapper to its canonical Push token', async () => {
+  itWrapper('resolves a wrapper to its canonical Push token', async () => {
     const result = await PushChain.utils.tokens.getPC20Address(
-      fixtures!.wrapperSepolia,
+      fixtures!.wrapperSepolia!,
       { ...opts, chain: CHAIN.ETHEREUM_SEPOLIA }
     );
 
@@ -37,9 +53,9 @@ d('PC20 registry — getPC20Address', () => {
     expect(result.network).toBe(PUSH_NETWORK.TESTNET_DONUT);
   });
 
-  it('returns the same result whichever end of the mapping is supplied', async () => {
+  itWrapper('returns the same result whichever end of the mapping is supplied', async () => {
     const fromWrapper = await PushChain.utils.tokens.getPC20Address(
-      fixtures!.wrapperSepolia,
+      fixtures!.wrapperSepolia!,
       { ...opts, chain: CHAIN.ETHEREUM_SEPOLIA }
     );
     const fromPush = await PushChain.utils.tokens.getPC20Address(
@@ -51,16 +67,16 @@ d('PC20 registry — getPC20Address', () => {
     expect(fromPush.registry).toEqual(fromWrapper.registry);
   });
 
-  it('lists the Sepolia wrapper and the Push token in the registry', async () => {
+  itWrapper('lists the Sepolia wrapper and the Push token in the registry', async () => {
     const { registry } = await PushChain.utils.tokens.getPC20Address(
-      fixtures!.wrapperSepolia,
+      fixtures!.wrapperSepolia!,
       { ...opts, chain: CHAIN.ETHEREUM_SEPOLIA }
     );
 
     const sepolia = registry.find((e) => e.chain === CHAIN.ETHEREUM_SEPOLIA);
     expect(sepolia).toBeDefined();
     expect(sepolia!.address.toLowerCase()).toBe(
-      fixtures!.wrapperSepolia.toLowerCase()
+      fixtures!.wrapperSepolia!.toLowerCase()
     );
     expect(sepolia!.chainName).toBe('ETHEREUM_SEPOLIA');
     // Chain-native form: checksummed, not lowercase or bytes32-padded.
@@ -72,9 +88,9 @@ d('PC20 registry — getPC20Address', () => {
     expect(push!.chainName).toBe('PUSH_TESTNET_DONUT');
   });
 
-  it('puts the canonical Push entry last', async () => {
+  itWrapper('puts the canonical Push entry last', async () => {
     const { registry } = await PushChain.utils.tokens.getPC20Address(
-      fixtures!.wrapperSepolia,
+      fixtures!.wrapperSepolia!,
       { ...opts, chain: CHAIN.ETHEREUM_SEPOLIA }
     );
 
@@ -95,14 +111,9 @@ d('PC20 registry — getPC20Address', () => {
     }
   });
 
-  it('returns only the Push entry for a never-exported token', async () => {
-    if (!fixtures!.undeployedToken) {
-      console.log('[SKIP] PC20_UNDEPLOYED_TOKEN not set');
-      return;
-    }
-
+  itUndeployed('returns only the Push entry for a never-exported token', async () => {
     const { registry } = await PushChain.utils.tokens.getPC20Address(
-      fixtures!.undeployedToken,
+      fixtures!.undeployedToken!,
       { ...opts, chain: CHAIN.PUSH_TESTNET_DONUT }
     );
 
@@ -114,13 +125,13 @@ d('PC20 registry — getPC20Address', () => {
 d('PC20 registry — chain discovery', () => {
   const opts = { network: PUSH_NETWORK.TESTNET_DONUT };
 
-  it('works out the chain when none is supplied', async () => {
+  itWrapper('works out the chain when none is supplied', async () => {
     const withChain = await PushChain.utils.tokens.getPC20Address(
-      fixtures!.wrapperSepolia,
+      fixtures!.wrapperSepolia!,
       { ...opts, chain: CHAIN.ETHEREUM_SEPOLIA }
     );
     const discovered = await PushChain.utils.tokens.getPC20Address(
-      fixtures!.wrapperSepolia,
+      fixtures!.wrapperSepolia!,
       opts
     );
 
@@ -140,11 +151,11 @@ d('PC20 registry — chain discovery', () => {
 d('PC20 registry — rejections', () => {
   const opts = { network: PUSH_NETWORK.TESTNET_DONUT };
 
-  it('rejects the same wrapper address on the wrong chain', async () => {
+  itWrapper('rejects the same wrapper address on the wrong chain', async () => {
     // The copy-paste-onto-the-wrong-chain case. The address is real; the
     // namespace it is looked up under is not the one it is registered against.
     await expect(
-      PushChain.utils.tokens.getPC20Address(fixtures!.wrapperSepolia, {
+      PushChain.utils.tokens.getPC20Address(fixtures!.wrapperSepolia!, {
         ...opts,
         chain: CHAIN.BASE_SEPOLIA,
       })
@@ -178,12 +189,12 @@ d('PC20 registry — rejections', () => {
     ).rejects.toThrow(InvalidPC20AddressError);
   });
 
-  it('passes strict factory-identity validation against the live gateway', async () => {
+  itWrapper('passes strict factory-identity validation against the live gateway', async () => {
     // Tier B: the live external gateway's pc20Factory must equal
     // UniversalCore's pc20FactoryByChain, and the factory must recognize the
     // wrapper. This is what catches a misconfigured deployment.
     const result = await PushChain.utils.tokens.getPC20Address(
-      fixtures!.wrapperSepolia,
+      fixtures!.wrapperSepolia!,
       { ...opts, chain: CHAIN.ETHEREUM_SEPOLIA, strict: true }
     );
     expect(result.address.toLowerCase()).toBe(fixtures!.pushToken.toLowerCase());

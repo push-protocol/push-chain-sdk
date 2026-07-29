@@ -82,3 +82,55 @@ describe('PC20 gate', () => {
     expect(() => assertLegacyFunds(params)).toThrow(/without.*resolution/i);
   });
 });
+
+describe('route validation with PC20 funds', () => {
+  // This exact gap reached a live run: validateRouteParams re-checks
+  // funds.token against the symbol-keyed MOVEABLE_TOKENS table inside
+  // executeMultiChain, after the gate has already resolved the PC20. It must
+  // skip that check — and only that check — for PC20 shapes.
+  const { validateRouteParams } = jest.requireActual('../../../route-detector');
+  const target = {
+    to: { chain: CHAIN.ETHEREUM_SEPOLIA, address: '0x' + '1'.repeat(40) },
+    funds: { amount: BigInt(1) },
+  };
+
+  it('accepts an unresolved PC20 reference (pre-gate, e.g. prepareTransaction)', () => {
+    expect(() =>
+      validateRouteParams(
+        { ...target, funds: { amount: BigInt(1), token: PC20 } },
+        { clientChain: CHAIN.ETHEREUM_SEPOLIA }
+      )
+    ).not.toThrow();
+  });
+
+  it('accepts the gate-resolved internal form (_pc20 present)', () => {
+    expect(() =>
+      validateRouteParams(
+        {
+          ...target,
+          funds: {
+            amount: BigInt(1),
+            token: { symbol: 'rain', decimals: 18, address: PC20.address, mechanism: 'pc20-burn' },
+          },
+          _pc20: { standard: 'pc20', direction: 'export' },
+        },
+        { clientChain: CHAIN.ETHEREUM_SEPOLIA }
+      )
+    ).not.toThrow();
+  });
+
+  it('still rejects an unregistered MoveableToken', () => {
+    expect(() =>
+      validateRouteParams(
+        {
+          ...target,
+          funds: {
+            amount: BigInt(1),
+            token: { symbol: 'NOPE', decimals: 18, address: '0x' + '2'.repeat(40), mechanism: 'approve' },
+          },
+        },
+        { clientChain: CHAIN.ETHEREUM_SEPOLIA }
+      )
+    ).toThrow(/Unsupported moveable token/);
+  });
+});

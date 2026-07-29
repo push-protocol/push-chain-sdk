@@ -21,6 +21,7 @@ export {
   PC20_FACTORY_EVM,
   PC20_WRAPPER_EVM,
   EXTERNAL_GATEWAY_PC20_EVM,
+  VAULT_PC20_FACTORY_EVM,
 } from './pc20.evm';
 
 // SDK 5.2 gas abstraction (Case C overflow bridging)

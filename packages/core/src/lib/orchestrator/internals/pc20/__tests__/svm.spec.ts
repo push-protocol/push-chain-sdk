@@ -6,6 +6,9 @@ import {
   decodePc20State,
   validatePC20Mint,
   buildPC20BurnAccounts,
+  buildPC20SvmDeliveryFields,
+  buildPC20SvmCeaBurnPayload,
+  SPL_TOKEN_PROGRAM_ID,
   predictSvmWrapperMint,
   PC20_MINT_SEED,
   PC20_STATE_SEED,
@@ -215,8 +218,12 @@ describe('buildPC20BurnAccounts', () => {
     });
 
     expect(remainingAccounts).toHaveLength(2);
-    expect(remainingAccounts[0].equals(derivePC20State(PROGRAM_ID, mint).state)).toBe(true);
-    expect(remainingAccounts[1].equals(mint)).toBe(true);
+    expect(remainingAccounts[0].pubkey.equals(derivePC20State(PROGRAM_ID, mint).state)).toBe(true);
+    expect(remainingAccounts[1].pubkey.equals(mint)).toBe(true);
+    // deposit.rs flags: state readonly, mint writable, neither signs.
+    expect(remainingAccounts[0].isWritable).toBe(false);
+    expect(remainingAccounts[1].isWritable).toBe(true);
+    expect(remainingAccounts.every((a) => !a.isSigner)).toBe(true);
   });
 
   it('passes no gateway token account', () => {
@@ -224,5 +231,97 @@ describe('buildPC20BurnAccounts', () => {
     expect(
       buildPC20BurnAccounts({ programId: PROGRAM_ID, mint }).gatewayTokenAccount
     ).toBeNull();
+  });
+});
+
+describe('buildPC20SvmDeliveryFields', () => {
+  const { mint } = derivePC20Mint(PROGRAM_ID, PUSH_PC20);
+  const cea = new PublicKey('11111111111111111111111111111112');
+  const ceaAta = new PublicKey('11111111111111111111111111111113');
+  const recipientAta = new PublicKey('11111111111111111111111111111114');
+
+  const fields = buildPC20SvmDeliveryFields({
+    mint,
+    ceaAta,
+    recipientAta,
+    ceaAuthority: cea,
+    amount: BigInt(1_000_000),
+    decimals: 18,
+  });
+
+  it('encodes SPL TransferChecked (index 12, u64 LE amount, decimals)', () => {
+    expect(fields.ixData[0]).toBe(12);
+    expect(new DataView(fields.ixData.buffer).getBigUint64(1, true)).toBe(BigInt(1_000_000));
+    expect(fields.ixData[9]).toBe(18);
+    expect(fields.ixData).toHaveLength(10);
+  });
+
+  it('orders accounts source, mint, destination, owner with correct flags', () => {
+    // The owner (CEA) carries no signer flag — invoke_signed marks whichever
+    // account equals the CEA key as signer at CPI time.
+    expect(fields.accounts.map((a) => a.isWritable)).toEqual([true, false, true, false]);
+    expect(fields.accounts[3].pubkey).toBe(`0x${Buffer.from(cea.toBytes()).toString('hex')}`);
+    expect(fields.instructionId).toBe(2);
+  });
+});
+
+describe('buildPC20SvmCeaBurnPayload', () => {
+  const { mint } = derivePC20Mint(PROGRAM_ID, PUSH_PC20);
+  const cea = new PublicKey('11111111111111111111111111111112');
+  const ceaAta = new PublicKey('11111111111111111111111111111113');
+  const UEA = '0x5c70c864cf1adfb04a0e107ffa248ba3600eab8d' as const;
+  const pushPayload = Uint8Array.from([0xaa, 0xbb, 0xcc]);
+
+  const fields = buildPC20SvmCeaBurnPayload({
+    gatewayProgram: PROGRAM_ID,
+    mint,
+    ceaAuthority: cea,
+    ceaAta,
+    ueaAddress: UEA,
+    amount: BigInt(42),
+    pushPayload,
+  });
+
+  it('starts with the send_universal_tx anchor discriminator', () => {
+    const { createHash } = require('crypto');
+    const expected = createHash('sha256')
+      .update(Buffer.from('global:send_universal_tx'))
+      .digest()
+      .subarray(0, 8);
+    expect(Buffer.from(fields.ixData.subarray(0, 8))).toEqual(expected);
+  });
+
+  it('lays out SendUniversalTxIxArgs exactly (state.rs:67 field order)', () => {
+    const d = fields.ixData;
+    const view = new DataView(d.buffer);
+    let o = 8;
+    // recipient [u8;20] — the UEA; program enforces recipient == push_account
+    expect(Buffer.from(d.subarray(o, o + 20)).toString('hex')).toBe(UEA.slice(2)); o += 20;
+    // token [32] — the wrapper mint
+    expect(Buffer.from(d.subarray(o, o + 32))).toEqual(Buffer.from(mint.toBytes())); o += 32;
+    // amount u64 LE
+    expect(view.getBigUint64(o, true)).toBe(BigInt(42)); o += 8;
+    // payload Vec<u8>
+    expect(view.getUint32(o, true)).toBe(3); o += 4;
+    expect(Array.from(d.subarray(o, o + 3))).toEqual([0xaa, 0xbb, 0xcc]); o += 3;
+    // revert_recipient [32] — the CEA (revert re-mints to it)
+    expect(Buffer.from(d.subarray(o, o + 32))).toEqual(Buffer.from(cea.toBytes())); o += 32;
+    // signature_data: empty Vec<u8>
+    expect(view.getUint32(o, true)).toBe(0); o += 4;
+    // native_amount u64 — MUST be zero (program requires it)
+    expect(view.getBigUint64(o, true)).toBe(BigInt(0)); o += 8;
+    expect(o).toBe(d.length);
+  });
+
+  it('orders accounts [state ro, mint w, ceaAta w, tokenProgram ro]', () => {
+    // parse_pc20_cea_burn_accounts requires exactly this shape.
+    expect(fields.accounts).toHaveLength(4);
+    expect(fields.accounts.map((a) => a.isWritable)).toEqual([false, true, true, false]);
+    expect(fields.accounts[0].pubkey).toBe(
+      `0x${Buffer.from(derivePC20State(PROGRAM_ID, mint).state.toBytes()).toString('hex')}`
+    );
+    expect(fields.accounts[3].pubkey).toBe(
+      `0x${Buffer.from(SPL_TOKEN_PROGRAM_ID.toBytes()).toString('hex')}`
+    );
   });
 });

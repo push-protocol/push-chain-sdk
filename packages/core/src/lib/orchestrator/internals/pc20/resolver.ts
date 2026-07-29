@@ -43,7 +43,11 @@ import {
   type PublicClient,
 } from 'viem';
 import { CHAIN, PUSH_NETWORK, VM } from '../../../constants/enums';
-import { CHAIN_INFO, UNIVERSAL_GATEWAY_ADDRESSES } from '../../../constants/chain';
+import {
+  CHAIN_INFO,
+  UNIVERSAL_GATEWAY_ADDRESSES,
+  VAULT_ADDRESSES,
+} from '../../../constants/chain';
 import {
   UNIVERSAL_CORE_EVM,
   UNIVERSAL_GATEWAY_PC,
@@ -51,6 +55,7 @@ import {
   PC20_FACTORY_EVM,
   PC20_WRAPPER_EVM,
   EXTERNAL_GATEWAY_PC20_EVM,
+  VAULT_PC20_FACTORY_EVM,
 } from '../../../constants/abi';
 import { getPushChainForNetwork, getUniversalGatewayPCAddress } from '../helpers';
 import {
@@ -130,11 +135,28 @@ export type PC20ResolverOptions = {
 
 /**
  * Instrumentation for the round-trip budget assertion. Incremented once per
- * network round trip (a multicall counts as one, which is the whole point).
+ * network round trip (a batch counts as one, which is the whole point).
  */
 export const __readCount = { n: 0 };
 
 const clientCache = new Map<string, PublicClient>();
+
+/**
+ * Why JSON-RPC batching rather than Multicall3.
+ *
+ * Every PC20 registry read targets UniversalCore on Push Chain, so batching is
+ * what keeps `getPC20Address` at one round trip instead of one per chain. The
+ * obvious tool is `client.multicall()` — but **Multicall3 is not deployed on
+ * Push Chain**, so that path fails outright with "multicallAddress is
+ * required". Verified against Donut: no code at
+ * `0xcA11bde05977b3631167028862bE2a173976CA11`.
+ *
+ * viem's transport-level `batch` option achieves the same thing a layer lower:
+ * concurrent `eth_call`s issued in the same tick are coalesced into a single
+ * JSON-RPC batch request over one HTTP round trip. No contract required, and it
+ * works identically on chains that do have Multicall3.
+ */
+const BATCH_TRANSPORT_OPTS = { batch: { wait: 0 } } as const;
 
 function rpcFor(chain: CHAIN, opts: PC20ResolverOptions): string {
   const override = opts.rpcUrls?.[chain]?.[0];
@@ -154,26 +176,41 @@ function clientFor(chain: CHAIN, opts: PC20ResolverOptions): PublicClient {
   const key = `${chain}:${url}`;
   let client = clientCache.get(key);
   if (!client) {
-    client = createPublicClient({ transport: http(url) }) as PublicClient;
+    client = createPublicClient({
+      transport: http(url, BATCH_TRANSPORT_OPTS),
+    }) as PublicClient;
     clientCache.set(key, client);
   }
   return client;
 }
 
 /**
- * Batch reads into a single round trip.
+ * Read several contract calls in one network round trip.
  *
- * `allowFailure: true` because several PC20 probes are legitimately expected to
- * revert — `pc20Metadata()` on a plain ERC20 is the primary discriminator, not
- * an error. Callers interpret each result individually.
+ * Individual `readContract` calls issued together in the same tick are coalesced
+ * by the batching transport (see {@link BATCH_TRANSPORT_OPTS}). `Promise.all`
+ * dispatches them synchronously, which is what puts them in the same batch
+ * window — awaiting them one at a time would silently become N round trips.
+ *
+ * Failures are captured per call rather than thrown, because several PC20 probes
+ * are *expected* to revert: `pc20Metadata()` reverting on a plain ERC20 is the
+ * primary discriminator, not an error condition. Callers interpret each result
+ * individually via {@link unwrap}.
  */
 async function batchRead(
   client: PublicClient,
   contracts: readonly unknown[]
 ): Promise<Array<{ status: 'success' | 'failure'; result?: unknown; error?: unknown }>> {
   __readCount.n += 1;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (await client.multicall({ contracts: contracts as any, allowFailure: true })) as any;
+  return Promise.all(
+    contracts.map((c) =>
+      client
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .readContract(c as any)
+        .then((result) => ({ status: 'success' as const, result }))
+        .catch((error) => ({ status: 'failure' as const, error }))
+    )
+  );
 }
 
 function unwrap<T>(
@@ -349,6 +386,12 @@ export async function verifyEvmWrapperIdentity(
   const pushClient = clientFor(getPushChainForNetwork(opts.network), opts);
   const extClient = clientFor(chain, opts);
 
+  // Reference factory to compare the gateway against. UniversalCore's registry
+  // when it has one; otherwise the destination Vault's own pointer — the Vault
+  // is what deploys and mints wrappers (`Vault.sol:327`), so gateway-vs-Vault
+  // agreement is the identity that actually matters at settlement. The registry
+  // read is failure-tolerant because the deployed UniversalCore may not expose
+  // `pc20FactoryByChain` at all (true on Donut as of this writing).
   const [registryFactoryEntry] = await batchRead(pushClient, [
     {
       address: core,
@@ -358,14 +401,38 @@ export async function verifyEvmWrapperIdentity(
     },
   ]);
   const registryFactoryRaw = unwrap<Hex>(registryFactoryEntry);
-  if (!registryFactoryRaw || isZeroBytes32(registryFactoryRaw)) {
+  let referenceFactory: string | undefined =
+    registryFactoryRaw && !isZeroBytes32(registryFactoryRaw)
+      ? pc20Bytes32ToAddress(chain, registryFactoryRaw)
+      : undefined;
+
+  if (!referenceFactory) {
+    const vault = VAULT_ADDRESSES[chain];
+    if (vault) {
+      const [vaultFactoryEntry] = await batchRead(extClient, [
+        {
+          address: getAddress(vault),
+          abi: VAULT_PC20_FACTORY_EVM,
+          functionName: 'pc20Factory',
+          args: [],
+        },
+      ]);
+      const vaultFactory = unwrap<`0x${string}`>(vaultFactoryEntry);
+      if (vaultFactory && vaultFactory !== '0x0000000000000000000000000000000000000000') {
+        referenceFactory = getAddress(vaultFactory);
+      }
+    }
+  }
+
+  if (!referenceFactory) {
     throw new UnsupportedPC20DestinationError({
       chain: String(chain),
       chainNamespace: namespace,
-      hint: 'UniversalCore has no PC20 factory registered for this chain.',
+      hint:
+        'Neither UniversalCore nor the destination Vault has a PC20 factory ' +
+        'registered for this chain.',
     });
   }
-  const registryFactory = pc20Bytes32ToAddress(chain, registryFactoryRaw);
 
   const [gatewayFactoryEntry, codeEntry] = await Promise.all([
     batchRead(extClient, [
@@ -379,13 +446,13 @@ export async function verifyEvmWrapperIdentity(
   ]);
 
   const gatewayFactory = unwrap<`0x${string}`>(gatewayFactoryEntry);
-  if (!gatewayFactory || getAddress(gatewayFactory) !== getAddress(registryFactory)) {
+  if (!gatewayFactory || getAddress(gatewayFactory) !== getAddress(referenceFactory)) {
     throw new PC20FactoryMismatchError({
       chain: String(chain),
       address,
       chainNamespace: namespace,
       gatewayFactory,
-      registryFactory,
+      registryFactory: referenceFactory,
     });
   }
 

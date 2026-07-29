@@ -15,7 +15,12 @@ import { PushChain } from '../../../src';
 import { PUSH_NETWORK, CHAIN } from '../../../src/lib/constants/enums';
 import { PC20TokenChainMismatchError } from '../../../src/lib/orchestrator/internals/pc20/errors';
 import { createEvmPushClient } from '@e2e/shared/evm-client';
-import { getPC20Fixtures, announcePC20Skip } from '@e2e/shared/pc20-fixtures';
+import {
+  getPC20Fixtures,
+  announcePC20Skip,
+  waitToleratingFeeCreditBug,
+  sendToleratingFeeCreditBug,
+} from '@e2e/shared/pc20-fixtures';
 import { ERC20_EVM } from '../../../src/lib/constants/abi/erc20.evm';
 import { createPublicClient, http, getAddress } from 'viem';
 import { CHAIN_INFO } from '../../../src/lib/constants/chain';
@@ -44,7 +49,7 @@ d('PC20 inbound — EVM wrapper burn', () => {
 
   const wrapperBalance = (owner: `0x${string}`) =>
     sepoliaClient().readContract({
-      address: getAddress(fixtures!.wrapperSepolia),
+      address: getAddress(fixtures!.wrapperSepolia!),
       abi: ERC20_EVM,
       functionName: 'balanceOf',
       args: [owner],
@@ -67,7 +72,27 @@ d('PC20 inbound — EVM wrapper burn', () => {
     client = setup.pushClient;
     signerAddress = setup.account.address;
     ueaAddress = client.universal.account as `0x${string}`;
-  }, 120_000);
+
+    // Self-fund: the burn tests need wallet wrapper. Export the shortfall so
+    // the suite runs from any starting state instead of asserting leftovers.
+    const NEEDED = AMOUNT * BigInt(3);
+    const have = await wrapperBalance(signerAddress);
+    if (have < NEEDED) {
+      console.log(`[seed] exporting ${NEEDED - have} wrapper to the wallet…`);
+      const exp = await client.universal.sendTransaction({
+        to: { chain: CHAIN.ETHEREUM_SEPOLIA, address: signerAddress },
+        funds: {
+          amount: NEEDED - have,
+          token: {
+            standard: 'pc20',
+            chain: CHAIN.PUSH_TESTNET_DONUT,
+            address: fixtures!.pushToken,
+          },
+        },
+      });
+      await exp.wait();
+    }
+  }, 600_000);
 
   it('rejects a wrong-chain token reference before any broadcast', async () => {
     // funds.token.chain must be where the wrapper lives. Naming the destination
@@ -80,7 +105,7 @@ d('PC20 inbound — EVM wrapper burn', () => {
           token: {
             standard: 'pc20',
             chain: CHAIN.BASE_SEPOLIA,
-            address: fixtures!.wrapperSepolia,
+            address: fixtures!.wrapperSepolia!,
           },
         },
       })
@@ -93,20 +118,19 @@ d('PC20 inbound — EVM wrapper burn', () => {
 
     expect(wrapperBefore).toBeGreaterThanOrEqual(AMOUNT);
 
-    const response = await client.universal.sendTransaction({
-      to: ueaAddress,
-      funds: {
-        amount: AMOUNT,
-        token: {
-          standard: 'pc20',
-          chain: CHAIN.ETHEREUM_SEPOLIA,
-          address: fixtures!.wrapperSepolia,
+    await sendToleratingFeeCreditBug(() =>
+      client.universal.sendTransaction({
+        to: ueaAddress,
+        funds: {
+          amount: AMOUNT,
+          token: {
+            standard: 'pc20',
+            chain: CHAIN.ETHEREUM_SEPOLIA,
+            address: fixtures!.wrapperSepolia!,
+          },
         },
-      },
-    });
-
-    expect(response.hash).toBeTruthy();
-    await response.wait();
+      })
+    );
 
     const wrapperAfter = await wrapperBalance(signerAddress);
     const pushAfter = await pushBalance(ueaAddress);
@@ -124,7 +148,7 @@ d('PC20 inbound — EVM wrapper burn', () => {
 
     const allowance = () =>
       sepoliaClient().readContract({
-        address: getAddress(fixtures!.wrapperSepolia),
+        address: getAddress(fixtures!.wrapperSepolia!),
         abi: ERC20_EVM,
         functionName: 'allowance',
         args: [signerAddress, getAddress(gateway)],
@@ -132,18 +156,19 @@ d('PC20 inbound — EVM wrapper burn', () => {
 
     const before = await allowance();
 
-    const response = await client.universal.sendTransaction({
-      to: ueaAddress,
-      funds: {
-        amount: AMOUNT,
-        token: {
-          standard: 'pc20',
-          chain: CHAIN.ETHEREUM_SEPOLIA,
-          address: fixtures!.wrapperSepolia,
+    await sendToleratingFeeCreditBug(() =>
+      client.universal.sendTransaction({
+        to: ueaAddress,
+        funds: {
+          amount: AMOUNT,
+          token: {
+            standard: 'pc20',
+            chain: CHAIN.ETHEREUM_SEPOLIA,
+            address: fixtures!.wrapperSepolia!,
+          },
         },
-      },
-    });
-    await response.wait();
+      })
+    );
 
     expect(await allowance()).toBe(before);
   }, 600_000);
@@ -153,21 +178,22 @@ d('PC20 inbound — EVM wrapper burn', () => {
     // target gets no allowance, so it must read its own received balance.
     const pushBefore = await pushBalance(ueaAddress);
 
-    const response = await client.universal.sendTransaction({
-      to: ueaAddress,
-      // A no-op call against the UEA: exercises the transfer-then-call ordering
-      // without depending on a deployed test contract.
-      data: '0x',
-      funds: {
-        amount: AMOUNT,
-        token: {
-          standard: 'pc20',
-          chain: CHAIN.ETHEREUM_SEPOLIA,
-          address: fixtures!.wrapperSepolia,
+    await sendToleratingFeeCreditBug(() =>
+      client.universal.sendTransaction({
+        to: ueaAddress,
+        // A no-op call against the UEA: exercises the transfer-then-call ordering
+        // without depending on a deployed test contract.
+        data: '0x',
+        funds: {
+          amount: AMOUNT,
+          token: {
+            standard: 'pc20',
+            chain: CHAIN.ETHEREUM_SEPOLIA,
+            address: fixtures!.wrapperSepolia!,
+          },
         },
-      },
-    });
-    await response.wait();
+      })
+    );
 
     expect((await pushBalance(ueaAddress)) - pushBefore).toBe(AMOUNT);
   }, 600_000);
