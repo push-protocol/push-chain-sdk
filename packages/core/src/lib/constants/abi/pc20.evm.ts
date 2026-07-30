@@ -135,8 +135,10 @@ export const VAULT_PC20_FACTORY_EVM = [
 /**
  * External gateway's configured factory.
  *
- * Compared against `UniversalCore.pc20FactoryByChain` — if they disagree the
- * live gateway will not take the PC20 burn path for this token.
+ * Compared against the reference factory (the destination Vault's
+ * `pc20Factory()`, or `UniversalCore.pc20FactoryByChain` if a future upgrade
+ * exposes it) — if they disagree the live gateway will not take the PC20 burn
+ * path for this token.
  */
 export const EXTERNAL_GATEWAY_PC20_EVM = [
   {

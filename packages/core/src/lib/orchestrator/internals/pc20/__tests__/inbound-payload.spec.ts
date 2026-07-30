@@ -21,7 +21,6 @@ const WRAPPER = '0x3333333333333333333333333333333333333333' as const;
 const PUSH_PC20 = '0x4444444444444444444444444444444444444444' as const;
 
 const resolved: ResolvedPC20 = {
-  standard: 'pc20',
   direction: 'import',
   originChain: CHAIN.ETHEREUM_SEPOLIA,
   originAddress: WRAPPER,

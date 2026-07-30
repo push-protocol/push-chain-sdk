@@ -407,21 +407,28 @@ async function executeFundsOnlySvm(
       },
     });
   } else if (execute.funds!.token!.mechanism === 'pc20-burn') {
+    // NOTE: currently unreachable from sendTransaction — the orchestrator
+    // routes SVM PC20 imports through the funds+payload path (svm-bridge),
+    // because a pure burn's empty payload gets the PC20 selector prepended by
+    // the gateway and classified FUNDS_AND_PAYLOAD, which the chain's inbound
+    // decode bricks on with no revert (the selector-only "0x" guard bug).
+    // Kept correct as the pure-burn shape for when that chain fix ships.
+    //
     // PC20 wrapper burn — route_pc20_universal_tx (deposit.rs). Differs from
-    // the SPL escrow route in three program-enforced ways: the recipient must
+    // the SPL escrow route in four program-enforced ways: the recipient must
     // be the nonzero Push recipient (the chain unlocks directly to it), the
-    // gateway token account must be ABSENT (burn, not escrow), and
-    // remaining_accounts must be exactly [pc20_state ro, pc20_mint w]. The
-    // gateway prepends the PC20 selector itself — the SDK must not.
+    // gateway token account must be ABSENT (burn, not escrow),
+    // remaining_accounts must be exactly [pc20_state ro, pc20_mint w], and
+    // token_rate_limit is null — a pure burn consumes no per-token rate limit,
+    // and this call sends exactly the inbound fee, so there is no post-fee
+    // native excess to route as a (rate-limited) FUNDS leg. The gateway
+    // prepends the PC20 selector itself — the SDK must not.
     const mintPk = new PublicKey(execute.funds!.token!.address);
     const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
     const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
     const userAta = PublicKey.findProgramAddressSync(
       [userPk.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mintPk.toBuffer()], ASSOCIATED_TOKEN_PROGRAM_ID
     )[0];
-    const [tokenRateLimitPda] = PublicKey.findProgramAddressSync(
-      [stringToBytes('rate_limit'), mintPk.toBuffer()], programId
-    );
     const { remainingAccounts } = buildPC20BurnAccounts({ programId, mint: mintPk });
 
     const reqBurn = buildSvmUniversalTxRequest({
@@ -433,9 +440,9 @@ async function executeFundsOnlySvm(
       args: [reqBurn, protocolFeeLamports], signer: ctx.universalSigner,
       accounts: {
         config: configPda, vault: vaultPda, feeVault: feeVaultPda,
-        userTokenAccount: userAta, gatewayTokenAccount: null as never, user: userPk,
+        userTokenAccount: userAta, gatewayTokenAccount: null, user: userPk,
         tokenProgram: TOKEN_PROGRAM_ID, priceUpdate: priceUpdatePk,
-        rateLimitConfig: rateLimitConfigPda, tokenRateLimit: tokenRateLimitPda,
+        rateLimitConfig: rateLimitConfigPda, tokenRateLimit: null,
         systemProgram: SystemProgram.programId,
       },
       remainingAccounts,

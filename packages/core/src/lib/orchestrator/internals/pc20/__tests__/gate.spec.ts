@@ -15,13 +15,12 @@ const MOVEABLE: MoveableToken = {
 };
 
 const PC20: PC20TokenReference = {
-  standard: 'pc20',
   chain: CHAIN.ETHEREUM_SEPOLIA,
   address: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984',
 };
 
 describe('isPC20Reference', () => {
-  it('accepts the tagged form', () => {
+  it('accepts a { chain, address } reference', () => {
     expect(isPC20Reference(PC20)).toBe(true);
   });
 
@@ -31,15 +30,6 @@ describe('isPC20Reference', () => {
 
   it('rejects undefined', () => {
     expect(isPC20Reference(undefined)).toBe(false);
-  });
-
-  it('accepts the deprecated untagged { chain, address } form', () => {
-    expect(
-      isPC20Reference({
-        chain: CHAIN.ETHEREUM_SEPOLIA,
-        address: PC20.address,
-      } as PC20TokenReference)
-    ).toBe(true);
   });
 
   it('does not misclassify a MoveableToken that also carries a chain', () => {
@@ -112,7 +102,7 @@ describe('route validation with PC20 funds', () => {
             amount: BigInt(1),
             token: { symbol: 'rain', decimals: 18, address: PC20.address, mechanism: 'pc20-burn' },
           },
-          _pc20: { standard: 'pc20', direction: 'export' },
+          _pc20: { direction: 'export' },
         },
         { clientChain: CHAIN.ETHEREUM_SEPOLIA }
       )

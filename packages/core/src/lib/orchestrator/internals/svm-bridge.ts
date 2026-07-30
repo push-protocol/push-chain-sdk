@@ -85,13 +85,16 @@ export async function sendSVMTxWithFunds(
 
   // --- PC20 wrapper burn -------------------------------------------------
   // route_pc20_universal_tx (deposit.rs) differs from the SPL escrow route in
-  // three program-enforced ways, each of which reverts if violated:
+  // four program-enforced ways, each of which reverts if violated:
   //   1. req.recipient must be the NONZERO 20-byte Push recipient — the chain
   //      unlocks the source token directly to it (unlockPC20), unlike SPL
   //      where zeros are fine because the UEA payload moves funds.
   //   2. gateway_token_account must be ABSENT — the wrapper is burned via the
   //      mint authority, never escrowed.
   //   3. remaining_accounts must be exactly [pc20_state ro, pc20_mint w].
+  //   4. token_rate_limit is null for a pure burn; the NATIVE-SOL rate-limit
+  //      PDA when native value above the inbound fee rides along (that excess
+  //      is a rate-limited native FUNDS leg).
   // The SDK must NOT prepend the PC20 selector — the gateway does
   // (pc20_prefixed_payload), mirroring the EVM inbound.
   const pc20 = execute._pc20;
@@ -111,14 +114,27 @@ export async function sendSVMTxWithFunds(
       [userPk.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mintPk.toBuffer()],
       ASSOCIATED_TOKEN_PROGRAM_ID
     )[0];
-    const [tokenRateLimitPda] = PublicKey.findProgramAddressSync(
-      [stringToBytes('rate_limit'), mintPk.toBuffer()],
-      programId
-    );
+    // A pure PC20 burn consumes no per-token rate limit — pass null. When
+    // native value rides along (nativeAmount > 0), the post-fee excess routes
+    // as a native FUNDS leg, which IS rate-limited: that leg requires the
+    // native-SOL rate-limit PDA (token_mint = Pubkey::default()) — the program
+    // rejects a mint-derived one (deposit.rs route_pc20_universal_tx).
+    const tokenRateLimit =
+      nativeAmount > BigInt(0)
+        ? PublicKey.findProgramAddressSync(
+            [stringToBytes('rate_limit'), PublicKey.default.toBuffer()],
+            programId
+          )[0]
+        : null;
 
-    const pushRecipient = (
-      typeof execute.to === 'string' ? execute.to : ueaAddressSvm
-    ) as `0x${string}`;
+    // The unlock recipient is ALWAYS the signer's UEA, never `execute.to`:
+    // the payload multicall transfers the canonical token FROM the UEA to
+    // `execute.to` (buildExecuteMulticall Branch 2), so the unlock must land
+    // on the UEA for that leg to have funds — EVM parity, and the exact shape
+    // the R3 drain verified live (degenerate self-transfer when to === UEA).
+    // Unlocking directly to `to` while the payload transfers from the UEA
+    // would strand the transfer leg with a zero balance.
+    const pushRecipient = ueaAddressSvm as `0x${string}`;
 
     const burnReq = buildSvmUniversalTxRequest({
       recipient: Array.from(Buffer.from(pushRecipient.slice(2), 'hex')),
@@ -140,12 +156,12 @@ export async function sendSVMTxWithFunds(
         vault: vaultPda,
         feeVault: feeVaultPda,
         userTokenAccount: userAta,
-        gatewayTokenAccount: null as never,
+        gatewayTokenAccount: null,
         user: userPk,
         priceUpdate: priceUpdatePk,
         tokenProgram: TOKEN_PROGRAM_ID,
         rateLimitConfig: rateLimitConfigPda,
-        tokenRateLimit: tokenRateLimitPda,
+        tokenRateLimit,
         systemProgram: SystemProgram.programId,
       },
       remainingAccounts,

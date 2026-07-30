@@ -82,7 +82,6 @@ d('PC20 round trip — Push to EVM and back', () => {
       funds: {
         amount: AMOUNT,
         token: {
-          standard: 'pc20',
           chain: CHAIN.PUSH_TESTNET_DONUT,
           address: fixtures!.pushToken,
         },
@@ -117,7 +116,6 @@ d('PC20 round trip — Push to EVM and back', () => {
         funds: {
           amount: AMOUNT,
           token: {
-            standard: 'pc20',
             chain: destChain(),
             address: wrapper,
           },

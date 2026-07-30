@@ -104,7 +104,6 @@ export type PC20DeploymentInfo = {
 
 /** Everything the execution path needs about a resolved funds token. */
 export type ResolvedPC20 = {
-  standard: 'pc20';
   direction: 'import' | 'export';
   /** Chain the token the caller named lives on. */
   originChain: CHAIN;
@@ -386,12 +385,14 @@ export async function verifyEvmWrapperIdentity(
   const pushClient = clientFor(getPushChainForNetwork(opts.network), opts);
   const extClient = clientFor(chain, opts);
 
-  // Reference factory to compare the gateway against. UniversalCore's registry
-  // when it has one; otherwise the destination Vault's own pointer — the Vault
-  // is what deploys and mints wrappers (`Vault.sol:327`), so gateway-vs-Vault
-  // agreement is the identity that actually matters at settlement. The registry
-  // read is failure-tolerant because the deployed UniversalCore may not expose
-  // `pc20FactoryByChain` at all (true on Donut as of this writing).
+  // Reference factory to compare the gateway against. The deployed
+  // UniversalCore does not expose `pc20FactoryByChain` (chain-team decision:
+  // the token mappings are the supported registry surface), so the standing
+  // reference is the destination Vault's own pointer — the Vault is what
+  // deploys and mints wrappers (`Vault.sol:327`), so gateway-vs-Vault
+  // agreement is the identity that actually matters at settlement. The
+  // registry read stays first, failure-tolerant, for forward compatibility
+  // should a future upgrade add the accessor.
   const [registryFactoryEntry] = await batchRead(pushClient, [
     {
       address: core,
@@ -813,7 +814,6 @@ export async function resolvePC20Token(
     const pushAddress = getAddress(address) as `0x${string}`;
     const meta = await readPushPC20Metadata(pushAddress, opts);
     return {
-      standard: 'pc20',
       direction: 'export',
       originChain: pushChain,
       originAddress: pushAddress,
@@ -833,7 +833,6 @@ export async function resolvePC20Token(
 
   const meta = await readPushPC20Metadata(pushAddress, opts);
   return {
-    standard: 'pc20',
     direction: 'import',
     originChain: chain,
     originAddress:

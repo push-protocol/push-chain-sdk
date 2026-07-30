@@ -47,9 +47,11 @@ export interface WriteContractParams extends ReadContractParams {
   value?: bigint; // value in ether
   signer: UniversalSigner;
   /**
-   * **For Solana only** Dynamic accounts to pass to the solana program instruction
+   * **For Solana only** Dynamic accounts to pass to the solana program
+   * instruction. `null` is valid for accounts the IDL marks `optional` —
+   * Anchor substitutes the program id as the on-wire "none" placeholder.
    */
-  accounts?: Record<string, PublicKey>;
+  accounts?: Record<string, PublicKey | null>;
   /**
    * **For Solana only** Keypairs that should sign the transaction
    */

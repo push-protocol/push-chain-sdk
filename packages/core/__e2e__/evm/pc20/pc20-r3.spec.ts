@@ -97,7 +97,6 @@ d('PC20 R3 — CEA burn on EVM', () => {
         funds: {
           amount: AMOUNT,
           token: {
-            standard: 'pc20',
             chain: CHAIN.PUSH_TESTNET_DONUT,
             address: fixtures!.pushToken,
           },
@@ -135,7 +134,6 @@ d('PC20 R3 — CEA burn on EVM', () => {
       funds: {
         amount: AMOUNT,
         token: {
-          standard: 'pc20',
           chain: CHAIN.ETHEREUM_SEPOLIA,
           address: wrapper,
         },

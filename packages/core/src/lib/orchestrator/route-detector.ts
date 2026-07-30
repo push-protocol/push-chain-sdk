@@ -345,11 +345,19 @@ export function validateRouteParams(
         ? effectiveSourceChain === chain
         : (MOVEABLE_TOKENS[chain] || []).some(t => t.symbol === token.symbol);
       if (!ok) {
+        // A PC20 reference is { chain, address } ONLY. If a caller added a
+        // symbol to one, it classified as a MoveableToken and landed here —
+        // say so instead of leaving them to puzzle over the static table.
+        const pc20Hint =
+          'chain' in (token as unknown as Record<string, unknown>)
+            ? '\nIf this is a PC20 token, pass { chain, address } only — no symbol or mechanism.'
+            : '';
         throw new RouteValidationError(
           `Unsupported moveable token for current client and route:\n` +
             `token=${tokenLabel}\n` +
             `clientChain=${clientLabel}\n` +
-            `${direction}=${chainEnumToName(chain)}`
+            `${direction}=${chainEnumToName(chain)}` +
+            pc20Hint
         );
       }
     };

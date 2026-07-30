@@ -6,14 +6,14 @@ import '@e2e/shared/setup';
  *   1. R2 funds-only export  → mints into the sender's CEA ATA
  *   2. R2 delivery export    → TransferChecked CPI into the recipient ATA
  *   3. R3 CEA burn           → recovers the CEA ATA balance, unlocks on Push
- *   4. R1 direct burn        → SKIPPED: blocked on admin `set_token_rate_limit`
- *                              (the outer send_universal_tx requires an
- *                              initialized per-mint rate limit; the R3 finalize
- *                              path explicitly does not)
+ *   4. R1 direct burn        → burns from the wallet ATA, unlocks on Push
+ *                              (rate-limit unblocked by the optional
+ *                              token_rate_limit account, gateway commit
+ *                              d5f6334; tolerates the known fee-credit bug on
+ *                              the deposit leg)
  *
- * Order is load-bearing: (1) seeds the CEA ATA that (3) recovers, so the suite
- * leaves the CEA ATA empty. Each full run locks 0.001 rain net (the wrapper
- * delivered to the wallet in (2) can only return via the blocked R1 path).
+ * Order is load-bearing: (1) seeds the CEA ATA that (3) recovers, and (2)
+ * seeds the wallet ATA that (4) burns — a full run conserves rain end to end.
  *
  * The wrapper mint needs no env var — it derives from PC20_PUSH_TOKEN
  * (predictSvmWrapperMint), which is the same derivation settlement uses.
@@ -40,7 +40,12 @@ import {
   deriveAtaPubkey,
 } from '../../../src/lib/orchestrator/internals/svm-rent';
 import { predictSvmWrapperMint } from '../../../src/lib/orchestrator/internals/pc20/svm';
-import { getPC20Fixtures, announcePC20Skip } from '@e2e/shared/pc20-fixtures';
+import {
+  getPC20Fixtures,
+  announcePC20Skip,
+  sendToleratingFeeCreditBug,
+  pollUntil,
+} from '@e2e/shared/pc20-fixtures';
 
 const fixtures = getPC20Fixtures();
 const hasSolKey = Boolean(process.env['SOLANA_PRIVATE_KEY']);
@@ -123,7 +128,6 @@ d('PC20 SVM flows', () => {
       funds: {
         amount: AMOUNT,
         token: {
-          standard: 'pc20',
           chain: CHAIN.PUSH_TESTNET_DONUT,
           address: fixtures!.pushToken,
         },
@@ -167,7 +171,6 @@ d('PC20 SVM flows', () => {
       funds: {
         amount: AMOUNT,
         token: {
-          standard: 'pc20',
           chain: CHAIN.PUSH_TESTNET_DONUT,
           address: fixtures!.pushToken,
         },
@@ -200,7 +203,6 @@ d('PC20 SVM flows', () => {
       funds: {
         amount: parked,
         token: {
-          standard: 'pc20',
           chain: CHAIN.SOLANA_DEVNET,
           address: mint.toBase58(),
         },
@@ -217,11 +219,13 @@ d('PC20 SVM flows', () => {
     expect(after.uea - before.uea).toBe(parked);
   });
 
-  // Blocked on chain ops: the outer send_universal_tx requires an initialized
-  // per-mint token_rate_limit (admin-gated set_token_rate_limit); until the
-  // wrapper mint is whitelisted, the direct burn fails simulation with
-  // AccountNotInitialized. Un-skip once the admin action lands.
-  it.skip('R1 direct burn from the wallet unlocks on Push (rate-limit gated)', async () => {
+  // Unblocked by gateway commit d5f6334 (token_rate_limit is Optional; the
+  // SDK routes SVM PC20 imports through the payload path, which carries a
+  // forward payload — never the selector-only shape the chain bricks on —
+  // and a native gas deposit, so the native-SOL rate-limit PDA is passed).
+  // The deposit's fee-credit leg still hits the known Bug 1 mask on Push, so
+  // the send is tolerance-wrapped; burn + unlock are asserted strictly.
+  it('R1 direct burn from the wallet unlocks on Push', async () => {
     const solSigner = await PushChain.utils.signer.toUniversalFromKeypair(solKeypair, {
       chain: CHAIN.SOLANA_DEVNET,
       library: PushChain.CONSTANTS.LIBRARY.SOLANA_WEB3JS,
@@ -235,15 +239,28 @@ d('PC20 SVM flows', () => {
     })) as { address: `0x${string}` } | `0x${string}`;
     const solUea = typeof solUeaRaw === 'string' ? solUeaRaw : solUeaRaw.address;
 
-    const before = await donutBal(solUea);
-    const tx = await solClient.universal.sendTransaction({
-      to: solUea,
-      funds: {
-        amount: AMOUNT,
-        token: { standard: 'pc20', chain: CHAIN.SOLANA_DEVNET, address: mint.toBase58() },
-      },
-    });
-    await tx.wait();
-    expect((await donutBal(solUea)) - before).toBe(AMOUNT);
+    const walletAta = deriveAtaPubkey(recipient, mint);
+    const before = {
+      uea: await donutBal(solUea),
+      walletAta: await ataBal(walletAta),
+      vault: await donutBal(VAULT_PC20),
+    };
+    expect(before.walletAta).toBeGreaterThanOrEqual(AMOUNT); // seeded by test 2
+
+    await sendToleratingFeeCreditBug(() =>
+      solClient.universal.sendTransaction({
+        to: solUea,
+        funds: {
+          amount: AMOUNT,
+          token: { chain: CHAIN.SOLANA_DEVNET, address: mint.toBase58() },
+        },
+      })
+    );
+
+    // Unlock lands on the UEA; the forward payload self-transfers there.
+    const ueaAfter = await pollUntil(() => donutBal(solUea), before.uea + AMOUNT);
+    expect(ueaAfter - before.uea).toBe(AMOUNT);
+    expect(before.walletAta - (await ataBal(walletAta))).toBe(AMOUNT);
+    expect(before.vault - (await donutBal(VAULT_PC20))).toBe(AMOUNT);
   });
 });

@@ -84,7 +84,6 @@ d('PC20 inbound — EVM wrapper burn', () => {
         funds: {
           amount: NEEDED - have,
           token: {
-            standard: 'pc20',
             chain: CHAIN.PUSH_TESTNET_DONUT,
             address: fixtures!.pushToken,
           },
@@ -103,7 +102,6 @@ d('PC20 inbound — EVM wrapper burn', () => {
         funds: {
           amount: AMOUNT,
           token: {
-            standard: 'pc20',
             chain: CHAIN.BASE_SEPOLIA,
             address: fixtures!.wrapperSepolia!,
           },
@@ -124,7 +122,6 @@ d('PC20 inbound — EVM wrapper burn', () => {
         funds: {
           amount: AMOUNT,
           token: {
-            standard: 'pc20',
             chain: CHAIN.ETHEREUM_SEPOLIA,
             address: fixtures!.wrapperSepolia!,
           },
@@ -162,7 +159,6 @@ d('PC20 inbound — EVM wrapper burn', () => {
         funds: {
           amount: AMOUNT,
           token: {
-            standard: 'pc20',
             chain: CHAIN.ETHEREUM_SEPOLIA,
             address: fixtures!.wrapperSepolia!,
           },
@@ -187,7 +183,6 @@ d('PC20 inbound — EVM wrapper burn', () => {
         funds: {
           amount: AMOUNT,
           token: {
-            standard: 'pc20',
             chain: CHAIN.ETHEREUM_SEPOLIA,
             address: fixtures!.wrapperSepolia!,
           },

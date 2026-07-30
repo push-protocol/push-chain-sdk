@@ -116,9 +116,9 @@ export class PC20RegistryMismatchError extends PC20Error {
 }
 
 /**
- * The live external gateway's configured `pc20Factory` differs from
- * UniversalCore's `pc20FactoryByChain`, or the factory does not recognize the
- * wrapper.
+ * The live external gateway's configured `pc20Factory` differs from the
+ * reference factory (the destination Vault's, or UniversalCore's registry if
+ * exposed), or the factory does not recognize the wrapper.
  *
  * Proceeding risks the gateway taking the non-PC20 path for this token.
  */
@@ -157,7 +157,7 @@ export class PC20ExpectedButPRC20Error extends PC20Error {
       {
         hint:
           'Move PRC20 tokens with the MoveableToken API ' +
-          '(pushChainClient.moveable.token.*), not a { standard: "pc20" } reference.',
+          '(pushChainClient.moveable.token.*), not a { chain, address } PC20 reference.',
         ...ctx,
       }
     );

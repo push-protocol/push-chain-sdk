@@ -31,14 +31,18 @@ export type ChainTarget = {
  *   - Push → external:   the Push chain the canonical token lives on
  * `to.chain` is the destination and is a separate field.
  *
- * The `standard` tag is required rather than inferred. `MoveableToken` happens
- * to be structurally distinguishable today (it requires `symbol` and
- * `mechanism`), but relying on that would make any future optional field on
- * `MoveableToken` silently collapse the union. An untagged `{ chain, address }`
- * is still accepted for one release with a deprecation warning.
+ * The canonical form is `{ chain, address }` — nothing else. Discrimination
+ * from `MoveableToken` relies on what a PC20 reference does NOT have:
+ * `MoveableToken` requires `symbol` and `mechanism`, so their absence is the
+ * discriminator (see {@link isPC20Reference}, the single predicate). This
+ * stays sound even if `MoveableToken` grows optional fields, because the
+ * check keys on its required ones.
+ *
+ * Do NOT add `symbol` to a PC20 reference — a present `symbol` makes the
+ * object a `MoveableToken` and routes it down the static-table path (the
+ * route validator names this mistake explicitly when it happens).
  */
 export type PC20TokenReference = {
-  standard: 'pc20';
   chain: CHAIN;
   /** Chain-native: checksummed hex on EVM, base58 on Solana. */
   address: string;
@@ -66,9 +70,9 @@ export function isPC20Reference(
   if (!token) return false;
   const candidate = token as Partial<PC20TokenReference> &
     Partial<import('../constants').MoveableToken>;
-  if (candidate.standard === 'pc20') return true;
-  // Deprecated untagged form: chain + address, and none of MoveableToken's
-  // required fields. Removed after one release.
+  // chain + address, and none of MoveableToken's required fields. Keying on
+  // the ABSENCE of required MoveableToken fields keeps this sound even if
+  // MoveableToken grows optional fields later.
   return (
     typeof candidate.chain === 'string' &&
     typeof candidate.address === 'string' &&

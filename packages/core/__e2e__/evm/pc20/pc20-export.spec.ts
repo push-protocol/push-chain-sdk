@@ -78,7 +78,6 @@ d('PC20 export — Push to EVM', () => {
       funds: {
         amount: AMOUNT,
         token: {
-          standard: 'pc20',
           chain: CHAIN.PUSH_TESTNET_DONUT,
           address: fixtures!.pushToken,
         },
@@ -97,7 +96,6 @@ d('PC20 export — Push to EVM', () => {
       funds: {
         amount: AMOUNT,
         token: {
-          standard: 'pc20',
           chain: CHAIN.PUSH_TESTNET_DONUT,
           address: fixtures!.pushToken,
         },
@@ -127,7 +125,6 @@ d('PC20 export — Push to EVM', () => {
       funds: {
         amount: AMOUNT,
         token: {
-          standard: 'pc20',
           chain: CHAIN.PUSH_TESTNET_DONUT,
           address: fixtures!.undeployedToken,
         },
@@ -153,7 +150,6 @@ d('PC20 export — Push to EVM', () => {
       funds: {
         amount: AMOUNT,
         token: {
-          standard: 'pc20',
           chain: CHAIN.PUSH_TESTNET_DONUT,
           address: fixtures!.pushToken,
         },

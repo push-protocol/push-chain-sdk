@@ -309,9 +309,11 @@ export type DestinationWrapper = {
  *
  * The Vault is therefore the authoritative answer to "where will the wrapper
  * land"; the registry copy can go stale without settlement noticing. The
- * registry is preferred when available so the two stay cross-checked, with the
- * Vault as fallback — which also keeps first exports working while
- * `pc20FactoryByChain` is missing from the deployed UniversalCore.
+ * deployed UniversalCore does not expose `pc20FactoryByChain` — by chain-team
+ * decision the token mappings plus the Vault's own pointer are the supported
+ * surface — so the Vault read is the standing path. The registry attempt is
+ * kept first purely for forward compatibility: if a future upgrade adds the
+ * accessor, the two become cross-checked with no SDK change.
  */
 export async function resolveDestinationWrapper(
   ctx: OrchestratorContext,
