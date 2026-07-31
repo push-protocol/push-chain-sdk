@@ -13,7 +13,6 @@ await pushChainClient.universal.sendTransaction({
   funds: {
     amount: PushChain.utils.helpers.parseUnits('1', 6),
     token: {
-      standard: 'pc20',
       chain: CONSTANTS.CHAIN.ETHEREUM_SEPOLIA,
       address: '0xPC20Wrapper',
     },
@@ -44,9 +43,11 @@ rejected before any approval.
 
 **Route coverage**
 
-- R1 (external → Push wrapper burn): EVM and Solana. The Solana direct burn
-  requires the gateway admin to whitelist the wrapper mint
-  (`set_token_rate_limit`) — until then it fails cleanly at simulation.
+- R1 (external → Push wrapper burn): EVM and Solana. The Solana burn needs no
+  per-mint rate-limit whitelisting (the gateway's `token_rate_limit` account is
+  optional for PC20 burns; the SDK passes `null`, or the native-SOL rate-limit
+  PDA when the call carries a native gas deposit). Solana PC20 imports always
+  route through the funds+payload path with an explicit forward payload.
 - R2 (Push → external export): EVM and Solana, including first-export wrapper
   prediction and Solana recipient-ATA delivery (falls back to the sender's CEA
   ATA when the recipient has no token account — an ATA cannot exist before its
@@ -78,5 +79,18 @@ a remediation hint.
 - `Inbound` protobuf field numbering realigned with the chain (was misnumbered
   from field 7 onward); `logIndex`, `isCea`, `rawPayload`, `isPc20` added.
 - `SvmClient.writeContract` supports `remainingAccounts`.
+- A PC20 return emits two gateway events — the wrapper burn and a separate
+  funds leg for the attached gas deposit — and status tracking followed the
+  wrong one (the last event on EVM, the second on Solana), so a failure
+  crediting the gas deposit was reported as the whole transfer failing even
+  though the tokens had arrived. Tracking now follows the burn leg on both
+  VMs, identified by its payload selector rather than its position. Non-PC20
+  flows are unchanged.
+- A PC20 burn now names the sender's executor account in the gateway request
+  instead of the zero-address sentinel. The gateway forwards a burn's excess
+  native value as a *funds* request carrying that recipient verbatim, and a
+  funds inbound credits it directly — so the zero made the chain mint the
+  prepaid gas to the zero address and revert, silently losing the deposit.
+  Other flows keep the sentinel, which the protocol resolves for them.
 
 Existing `MoveableToken` PRC20 and native-token flows are unchanged.
