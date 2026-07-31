@@ -14,6 +14,11 @@
  * The registry suite needs no signer and moves nothing, so gating it behind a
  * private key would keep the one suite that can run today from running.
  *
+ * RUN FUNDS-MOVING SUITES SERIALLY — `jest --runInBand`. They broadcast real
+ * transactions from a single key, so jest's default parallel workers race for
+ * the same nonce. Observed symptom: a worker is force-exited and its suite is
+ * reported failed with zero failed tests, while the same suite passes alone.
+ *
  * Environment:
  *
  *   PC20_PUSH_TOKEN          Push-native PC20 on Donut (0x…)          [required]

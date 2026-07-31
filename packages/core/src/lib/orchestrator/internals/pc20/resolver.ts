@@ -126,6 +126,8 @@ export type PC20ResolverOptions = {
   rpcUrls?: Partial<Record<CHAIN, string[]>>;
   /** Run Tier B factory-identity checks even on a warm path. */
   strict?: boolean;
+  /** Re-read the wrapper/source registry even when a positive cache entry exists. */
+  bypassCache?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -299,7 +301,9 @@ export async function resolveWrapperToSource(
   const key = cacheKey(opts.network, chain, address);
 
   const cached = wrapperToSourceCache.get(key);
-  if (cached) return { pushAddress: cached, chainNamespace: namespace, rawWrapper };
+  if (cached && !opts.bypassCache) {
+    return { pushAddress: cached, chainNamespace: namespace, rawWrapper };
+  }
 
   const core = await getUniversalCoreAddress(opts);
   const pushClient = clientFor(getPushChainForNetwork(opts.network), opts);

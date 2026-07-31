@@ -9,6 +9,8 @@ import { decodeAbiParameters, decodeFunctionData } from 'viem';
 import { CHAIN } from '../../constants/enums';
 import { UNIVERSAL_GATEWAY_PC } from '../../constants/abi';
 import { CEA_EVM } from '../../constants/abi/cea.evm';
+import { ERC20_EVM } from '../../constants/abi/erc20.evm';
+import { UEA_MULTICALL_SELECTOR } from '../../constants/selectors';
 import { classifyIntoSegments, composeCascadeDetailed } from '../internals/cascade';
 import { MULTICALL_TUPLE_TYPE } from '../payload-builders';
 import type { OrchestratorContext } from '../internals/context';
@@ -30,6 +32,47 @@ const TOKEN_A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as `0x${string}`;
 const UEA = '0x2222222222222222222222222222222222222222' as `0x${string}`;
 const CEA_BNB = '0x3333333333333333333333333333333333333333' as `0x${string}`;
 const CEA_ETH = '0x4444444444444444444444444444444444444444' as `0x${string}`;
+
+function hexToBytes(hex: `0x${string}`): Uint8Array {
+  return new Uint8Array(Buffer.from(hex.slice(2), 'hex'));
+}
+
+function extractSvmPc20Payload(svmPayload: `0x${string}`): {
+  accountCount: number;
+  amount: bigint;
+  payload: `0x${string}`;
+} {
+  const bytes = hexToBytes(svmPayload);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const accountCount = view.getUint32(0, false);
+  const ixDataOffset = 4 + accountCount * 33 + 4;
+  const amountOffset = ixDataOffset + 8 + 20 + 32;
+  const amount = view.getBigUint64(amountOffset, true);
+  const payloadLenOffset = amountOffset + 8;
+  const payloadLen = view.getUint32(payloadLenOffset, true);
+  const payloadOffset = payloadLenOffset + 4;
+
+  return {
+    accountCount,
+    amount,
+    payload: `0x${Buffer.from(
+      bytes.slice(payloadOffset, payloadOffset + payloadLen)
+    ).toString('hex')}`,
+  };
+}
+
+function extractSvmUniversalPayloadData(
+  payload: `0x${string}`
+): `0x${string}` {
+  const bytes = hexToBytes(payload);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dataLenOffset = 20 + 8;
+  const dataLen = view.getUint32(dataLenOffset, true);
+  const dataOffset = dataLenOffset + 4;
+  return `0x${Buffer.from(bytes.slice(dataOffset, dataOffset + dataLen)).toString(
+    'hex'
+  )}`;
+}
 
 function makeBaseHop(overrides: Partial<HopDescriptor> = {}): HopDescriptor {
   return {
@@ -642,6 +685,221 @@ describe('composeCascadeDetailed', () => {
     expect(outboundCall).toBeDefined();
     expect(outboundCall!.value).toBe(quotedWithBuffer);
     expect(requiredNativeValue).toBe(quotedWithBuffer);
+  });
+
+  it('always forwards a funds-only EVM PC20 import inside the inbound payload', async () => {
+    const wrapper = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as `0x${string}`;
+    const pushPc20 = '0xcccccccccccccccccccccccccccccccccccccccc' as `0x${string}`;
+    const amount = BigInt(1_000_000);
+    const params = {
+      from: { chain: CHAIN.BNB_TESTNET },
+      to: BOB,
+      funds: {
+        amount,
+        token: {
+          symbol: 'RAIN',
+          decimals: 18,
+          address: wrapper,
+          mechanism: 'pc20-burn' as const,
+        },
+      },
+      _pc20: {
+        direction: 'import' as const,
+        originChain: CHAIN.BNB_TESTNET,
+        originAddress: wrapper,
+        pushAddress: pushPc20,
+        name: 'Rain',
+        symbol: 'RAIN',
+        decimals: 18,
+        chainNamespace: 'eip155:97',
+      },
+    } as unknown as UniversalExecuteParams;
+    const hop = makeRoute3Hop(CHAIN.BNB_TESTNET, {
+      params,
+      burnAmount: BigInt(0),
+      gasFee: BigInt(0),
+      gasPrice: BigInt(0),
+    });
+    const segment: CascadeSegment = {
+      type: 'INBOUND_FROM_CEA',
+      hops: [hop],
+      sourceChain: CHAIN.BNB_TESTNET,
+      totalBurnAmount: BigInt(0),
+      prc20Token: TOKEN_A,
+      gasToken: TOKEN_A,
+      gasFee: BigInt(0),
+      gasPrice: BigInt(0),
+      gasLimit: BigInt(750_000),
+      maxPCForGas: BigInt(0),
+    };
+    const ctx = {
+      printTraces: false,
+      progressHook: () => undefined,
+      pushNetwork: 'TESTNET_DONUT',
+      pushClient: { readContract: jest.fn() },
+      universalSigner: {
+        account: { chain: CHAIN.ETHEREUM_SEPOLIA, address: ALICE },
+      },
+    } as unknown as OrchestratorContext;
+
+    const { multicalls } = await composeCascadeDetailed(
+      ctx,
+      [segment],
+      UEA,
+      BigInt('100000000000000000000')
+    );
+    const outboundCall = multicalls.find((call) =>
+      call.data.startsWith('0x77b86bec')
+    );
+    expect(outboundCall).toBeDefined();
+
+    const outboundDecoded = decodeFunctionData({
+      abi: UNIVERSAL_GATEWAY_PC,
+      data: outboundCall!.data,
+    });
+    const [outboundRequest] = outboundDecoded.args as [
+      UniversalOutboundTxRequest,
+    ];
+    const [ceaCalls] = decodeAbiParameters(
+      [MULTICALL_TUPLE_TYPE],
+      `0x${outboundRequest.payload.slice(10)}` as `0x${string}`
+    ) as [MultiCall[]];
+    const sendToUeaCall = ceaCalls.find((call) =>
+      call.data.startsWith('0xe7c1e3fc')
+    );
+    expect(sendToUeaCall).toBeDefined();
+
+    const sendToUeaDecoded = decodeFunctionData({
+      abi: CEA_EVM,
+      data: sendToUeaCall!.data,
+    });
+    expect((sendToUeaDecoded.args[0] as string).toLowerCase()).toBe(wrapper);
+    expect(sendToUeaDecoded.args[1]).toBe(amount);
+    const intermediatePayload = sendToUeaDecoded.args[2] as `0x${string}`;
+    expect(intermediatePayload).not.toBe('0x');
+
+    const [universalPayload] = decodeAbiParameters(
+      [
+        {
+          type: 'tuple',
+          components: [
+            { name: 'to', type: 'address' },
+            { name: 'value', type: 'uint256' },
+            { name: 'data', type: 'bytes' },
+            { name: 'gasLimit', type: 'uint256' },
+            { name: 'maxFeePerGas', type: 'uint256' },
+            { name: 'maxPriorityFeePerGas', type: 'uint256' },
+            { name: 'nonce', type: 'uint256' },
+            { name: 'deadline', type: 'uint256' },
+            { name: 'vType', type: 'uint8' },
+          ],
+        },
+      ],
+      intermediatePayload
+    ) as unknown as readonly [{ data: `0x${string}` }];
+    const [nestedPushCalls] = decodeAbiParameters(
+      [MULTICALL_TUPLE_TYPE],
+      `0x${universalPayload.data.slice(10)}` as `0x${string}`
+    ) as [MultiCall[]];
+    const forwardCall = nestedPushCalls.find(
+      (call) => call.to.toLowerCase() === pushPc20.toLowerCase()
+    );
+    expect(forwardCall).toBeDefined();
+
+    const forwardDecoded = decodeFunctionData({
+      abi: ERC20_EVM,
+      data: forwardCall!.data,
+    });
+    expect(forwardDecoded.functionName).toBe('transfer');
+    expect(forwardDecoded.args).toEqual([BOB, amount]);
+  });
+
+  it('always forwards a funds-only SVM PC20 import with the dedicated burn instruction', async () => {
+    const wrapperMint = 'So11111111111111111111111111111111111111112';
+    const pushPc20 = '0xcccccccccccccccccccccccccccccccccccccccc' as `0x${string}`;
+    const amount = BigInt(8_000);
+    const params = {
+      from: { chain: CHAIN.SOLANA_DEVNET },
+      to: BOB,
+      funds: {
+        amount,
+        token: {
+          symbol: 'RAIN',
+          decimals: 6,
+          address: wrapperMint,
+          mechanism: 'pc20-burn' as const,
+        },
+      },
+      _pc20: {
+        direction: 'import' as const,
+        originChain: CHAIN.SOLANA_DEVNET,
+        originAddress: wrapperMint,
+        pushAddress: pushPc20,
+        name: 'Rain',
+        symbol: 'RAIN',
+        decimals: 6,
+        chainNamespace: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+      },
+    } as unknown as UniversalExecuteParams;
+    const hop = makeRoute3Hop(CHAIN.SOLANA_DEVNET, {
+      sourceChain: CHAIN.SOLANA_DEVNET,
+      isSvmTarget: true,
+      params,
+      burnAmount: BigInt(0),
+      gasFee: BigInt(0),
+      gasPrice: BigInt(0),
+    });
+    const segment: CascadeSegment = {
+      type: 'INBOUND_FROM_CEA',
+      hops: [hop],
+      sourceChain: CHAIN.SOLANA_DEVNET,
+      totalBurnAmount: BigInt(0),
+      prc20Token: TOKEN_A,
+      gasToken: TOKEN_A,
+      gasFee: BigInt(0),
+      gasPrice: BigInt(0),
+      gasLimit: BigInt(1_000_000),
+      maxPCForGas: BigInt(0),
+    };
+    const ctx = {
+      printTraces: false,
+      progressHook: () => undefined,
+      pushNetwork: 'TESTNET_DONUT',
+      pushClient: { readContract: jest.fn() },
+      universalSigner: {
+        account: { chain: CHAIN.ETHEREUM_SEPOLIA, address: ALICE },
+      },
+    } as unknown as OrchestratorContext;
+
+    const { multicalls } = await composeCascadeDetailed(
+      ctx,
+      [segment],
+      UEA,
+      BigInt('100000000000000000000')
+    );
+    const outboundCall = multicalls.find((call) =>
+      call.data.startsWith('0x77b86bec')
+    );
+    expect(outboundCall).toBeDefined();
+
+    const outboundDecoded = decodeFunctionData({
+      abi: UNIVERSAL_GATEWAY_PC,
+      data: outboundCall!.data,
+    });
+    const [outboundRequest] = outboundDecoded.args as [
+      UniversalOutboundTxRequest,
+    ];
+    const pc20Send = extractSvmPc20Payload(outboundRequest.payload);
+
+    expect(outboundRequest.amount).toBe(BigInt(0));
+    expect(pc20Send.accountCount).toBe(4);
+    expect(pc20Send.amount).toBe(amount);
+    expect(pc20Send.payload).not.toBe('0x');
+    expect(
+      extractSvmUniversalPayloadData(pc20Send.payload).startsWith(
+        UEA_MULTICALL_SELECTOR
+      )
+    ).toBe(true);
   });
 
   it('rejects oversized SVM Route 3 cascade payloads before broadcast', async () => {

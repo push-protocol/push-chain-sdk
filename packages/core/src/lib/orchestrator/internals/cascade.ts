@@ -1,4 +1,10 @@
-import { assertLegacyFunds, gateFunds } from './pc20/gate';
+import {
+  assertLegacyFunds,
+  assertPC20ImportHasPayload,
+  gateFunds,
+  isPC20ImportWithFunds,
+  revalidatePreparedPC20,
+} from './pc20/gate';
 /**
  * Cascade composition functions extracted from Orchestrator.
  *
@@ -53,6 +59,7 @@ import type {
   UniversalTxResponse,
   UniversalExecuteParams,
   ExecuteParams,
+  LegacyExecuteParams,
   MultiCall,
   ChainTarget,
   CascadeExecutionOptions,
@@ -93,7 +100,12 @@ import {
 } from '../../progress-hook/progress-hook.types';
 import { buildSvmPayloadFromParams } from '../svm-idl/build-payload';
 import { runPreflight, maybeFireSvmWarnThreshold } from './preflight';
-import { ensureSvmFinalizeGasBudgetQuote } from './svm-rent';
+import {
+  deriveAtaPubkey,
+  ensureSvmFinalizeGasBudgetQuote,
+} from './svm-rent';
+import { buildPC20SvmCeaBurnPayload } from './pc20/svm';
+import type { ResolvedPC20 } from './pc20/resolver';
 import { InsufficientUEABalanceError } from './errors';
 import { fireProgressHook } from './context';
 import {
@@ -225,7 +237,12 @@ export async function prepareTransaction(
     params.deadline || BigInt(Math.floor(Date.now() / 1000) + 3600);
 
   // Build the HopDescriptor with all metadata needed for cascade nesting
-  const hop = await buildHopDescriptor(ctx, params, route, ueaAddress);
+  const hop = await buildHopDescriptor(
+    ctx,
+    preparedParams,
+    route,
+    ueaAddress
+  );
 
   const prepared: PreparedUniversalTx = {
     route,
@@ -626,7 +643,16 @@ export async function buildHopDescriptor(
         if (params.funds?.amount && params.funds.amount > BigInt(0)) {
           amount = params.funds.amount;
           const token = (params.funds as { token: MoveableToken }).token;
-          if (token && token.address) {
+          const pc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+          if (pc20?.direction === 'import') {
+            // PC20 CEA burns use the native PRC-20 only for the outbound
+            // relay's chain namespace and gas. The wrapper amount is carried
+            // inside the Solana self-call and must not be burned on Push.
+            prc20Token = getNativePRC20ForChain(
+              sourceChain,
+              ctx.pushNetwork
+            );
+          } else if (token && token.address) {
             prc20Token = PushChain.utils.tokens.getPRC20Address(token).address;
           } else {
             prc20Token = getNativePRC20ForChain(sourceChain, ctx.pushNetwork);
@@ -1646,13 +1672,20 @@ export async function composeCascadeDetailed(
         // UEA multicall so no nested outbound is needed.
         const mergedHopMulticalls: MultiCall[] = [];
         for (const h of segment.hops) {
-          if (hasExecutablePayloadData(h?.params?.data) || h?.params?.value) {
+          const pc20Forward = isPC20ImportWithFunds(h.params);
+          if (
+            hasExecutablePayloadData(h?.params?.data) ||
+            h?.params?.value ||
+            pc20Forward
+          ) {
             const hopCalls = buildExecuteMulticall({
-              execute: {
-                to: h.params.to as `0x${string}`,
-                value: h.params.value,
-                data: h.params.data,
-              },
+              execute: (pc20Forward
+                ? assertLegacyFunds(toExecuteParams(h.params))
+                : {
+                    to: h.params.to as `0x${string}`,
+                    value: h.params.value,
+                    data: h.params.data,
+                  }) as LegacyExecuteParams,
               ueaAddress,
               allowSelfValueCall: true,
             });
@@ -1682,6 +1715,14 @@ export async function composeCascadeDetailed(
           intermediatePayload = isSvmChain(sourceChain)
             ? buildInboundUniversalPayloadSvm(multicallPayload, { nonce })
             : buildInboundUniversalPayload(multicallPayload, { nonce });
+        }
+
+        for (const segmentHop of segment.hops) {
+          assertPC20ImportHasPayload(
+            segmentHop.params,
+            intermediatePayload !== '0x',
+            `Cascaded Route 3 ${sourceChain}`
+          );
         }
 
         // SVM chains: build SVM CPI payload instead of EVM CEA multicall
@@ -1720,19 +1761,38 @@ export async function composeCascadeDetailed(
           const ceaPdaHex = ('0x' +
             Buffer.from(ceaPda.toBytes()).toString('hex')) as `0x${string}`;
 
-          // Build SVM payload with intermediate Push Chain payload embedded
-          const svmPayload = encodeSvmCeaToUeaPayload({
-            gatewayProgramHex,
-            drainAmount,
-            tokenMintHex,
-            revertRecipientHex: ceaPdaHex,
-            extraPayload:
-              intermediatePayload !== '0x'
-                ? new Uint8Array(
-                    Buffer.from(intermediatePayload.slice(2), 'hex')
-                  )
-                : undefined,
-          });
+          // Build SVM payload with intermediate Push Chain payload embedded.
+          // PC20 burns use the gateway's dedicated send_universal_tx shape;
+          // SPL/native drains keep send_universal_tx_to_uea.
+          const extraPayload =
+            intermediatePayload !== '0x'
+              ? new Uint8Array(
+                  Buffer.from(intermediatePayload.slice(2), 'hex')
+                )
+              : undefined;
+          const pc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+          let svmPayload: `0x${string}`;
+          if (isPC20ImportWithFunds(params) && pc20) {
+            const mintPk = new PublicKey(pc20.originAddress);
+            const fields = buildPC20SvmCeaBurnPayload({
+              gatewayProgram: programPk,
+              mint: mintPk,
+              ceaAuthority: ceaPda,
+              ceaAta: deriveAtaPubkey(ceaPda, mintPk),
+              ueaAddress,
+              amount: drainAmount,
+              pushPayload: extraPayload ?? new Uint8Array(0),
+            });
+            svmPayload = encodeSvmExecutePayload(fields);
+          } else {
+            svmPayload = encodeSvmCeaToUeaPayload({
+              gatewayProgramHex,
+              drainAmount,
+              tokenMintHex,
+              revertRecipientHex: ceaPdaHex,
+              extraPayload,
+            });
+          }
           assertSvmPayloadWithinRelayLimit(
             svmPayload,
             `Route 3 SVM cascade ${sourceChain}`
@@ -2016,6 +2076,19 @@ export function createCascadedBuilder(
 
       // Extract HopDescriptors
       const hops = preparedTxs.map((tx) => tx._hop);
+
+      // Prepared PC20 imports pin registry-derived identity into their
+      // payload. Re-check that binding immediately before any route is
+      // executed or composed; a stale descriptor must never reach broadcast.
+      await Promise.all(
+        hops.map((hop) =>
+          revalidatePreparedPC20(
+            ctx,
+            hop.params as unknown as LegacyExecuteParams
+          )
+        )
+      );
+
       const enforceGasCheck =
         options?.enforceGasCheck === true ||
         hops.some((hop) => hop.params.options?.enforceGasCheck === true);

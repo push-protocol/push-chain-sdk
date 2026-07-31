@@ -1,4 +1,8 @@
-import { assertLegacyFunds } from './pc20/gate';
+import {
+  assertLegacyFunds,
+  assertPC20ImportHasPayload,
+  isPC20ImportWithFunds,
+} from './pc20/gate';
 import type { ResolvedPC20 } from './pc20/resolver';
 import {
   buildPC20ExportPayload,
@@ -1639,6 +1643,12 @@ export async function executeCeaToPush(
     pushPayload = buildInboundUniversalPayload(multicallPayload, { nonce: ueaNonce + BigInt(1) });
   }
 
+  assertPC20ImportHasPayload(
+    params,
+    pushPayload !== '0x',
+    `Route 3 EVM ${sourceChain}`
+  );
+
   // Build sendUniversalTxToUEA self-call on CEA. CEA self-calls must always
   // use value=0; native sends spend from the CEA's existing balance.
   // CEA internally calls gateway.sendUniversalTxFromCEA(...)
@@ -2071,6 +2081,11 @@ export async function executeCeaToPushSvm(
       ueaAddress,
       sourceChain,
       ueaNonce + BigInt(1)
+    );
+    assertPC20ImportHasPayload(
+      params,
+      Boolean(extra?.length),
+      `Route 3 SVM ${sourceChain}`
     );
     const fields = buildPC20SvmCeaBurnPayload({
       gatewayProgram: programPk,
@@ -2531,19 +2546,42 @@ export async function buildPayloadForRoute(
         );
         const ceaPdaHex2 = ('0x' + Buffer.from(ceaPda2.toBytes()).toString('hex')) as `0x${string}`;
 
-        const svmPayload = encodeSvmCeaToUeaPayload({
-          gatewayProgramHex,
-          drainAmount,
-          tokenMintHex,
-          extraPayload: buildR3SvmExtraPayload(
-            ctx,
-            params,
+        const extraPayload = buildR3SvmExtraPayload(
+          ctx,
+          params,
+          ueaAddress,
+          sourceChain,
+          nonce + BigInt(1)
+        );
+        assertPC20ImportHasPayload(
+          params,
+          Boolean(extraPayload?.length),
+          `Prepared Route 3 SVM ${sourceChain}`
+        );
+
+        const r3SvmPc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+        let svmPayload: `0x${string}`;
+        if (isPC20ImportWithFunds(params) && r3SvmPc20) {
+          const mintPk = new PublicKey(r3SvmPc20.originAddress);
+          const fields = buildPC20SvmCeaBurnPayload({
+            gatewayProgram: programPk,
+            mint: mintPk,
+            ceaAuthority: ceaPda2,
+            ceaAta: deriveAtaPubkey(ceaPda2, mintPk),
             ueaAddress,
-            sourceChain,
-            nonce + BigInt(1)
-          ),
-          revertRecipientHex: ceaPdaHex2,
-        });
+            amount: drainAmount,
+            pushPayload: extraPayload ?? new Uint8Array(0),
+          });
+          svmPayload = encodeSvmExecutePayload(fields);
+        } else {
+          svmPayload = encodeSvmCeaToUeaPayload({
+            gatewayProgramHex,
+            drainAmount,
+            tokenMintHex,
+            extraPayload,
+            revertRecipientHex: ceaPdaHex2,
+          });
+        }
         assertSvmPayloadWithinRelayLimit(
           svmPayload,
           `Route 3 SVM ${sourceChain}`
@@ -2602,22 +2640,33 @@ export async function buildPayloadForRoute(
       // Build Push Chain payload (what executes after inbound arrives)
       // Wrap in UniversalPayload struct for the relay.
       let pushPayload: `0x${string}` = '0x';
+      const r3Pc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+      const r3Pc20NeedsForward = isPC20ImportWithFunds(params);
       if (
         hasExecutablePayloadData(params.data) ||
-        (params.funds?.amount && (params.value ?? BigInt(0)) > BigInt(0))
+        (params.funds?.amount && (params.value ?? BigInt(0)) > BigInt(0)) ||
+        r3Pc20NeedsForward
       ) {
         const multicallData = buildExecuteMulticall({
           execute: {
             to: pushDestination,
             value: params.value,
             data: params.data,
-          },
+            ...(r3Pc20NeedsForward
+              ? { funds: params.funds, _pc20: r3Pc20 }
+              : {}),
+          } as LegacyExecuteParams,
           ueaAddress,
           allowSelfValueCall: true,
         });
         const multicallPayload = buildMulticallPayloadData(ctx, pushDestination, multicallData);
         pushPayload = buildInboundUniversalPayload(multicallPayload, { nonce: ueaNonceHop + BigInt(1) });
       }
+      assertPC20ImportHasPayload(
+        params,
+        pushPayload !== '0x',
+        `Prepared Route 3 EVM ${sourceChain}`
+      );
 
       // Build sendUniversalTxToUEA self-call on CEA. CEA self-calls must
       // always use value=0; native sends spend from the CEA balance.

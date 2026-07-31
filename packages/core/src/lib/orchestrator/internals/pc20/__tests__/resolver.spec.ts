@@ -185,6 +185,22 @@ describe('resolveWrapperToSource', () => {
     expect(contractReads).toBe(after);
   });
 
+  it('can bypass a positive cache entry for prepared-transaction revalidation', async () => {
+    script.source = [PUSH_PC20, true];
+    script.wrapper = [WRAPPER, true];
+    await resolveWrapperToSource(CHAIN_UNDER_TEST, WRAPPER, OPTS);
+    const afterCachedRead = contractReads;
+
+    script.source = [OTHER_WRAPPER, true];
+    const fresh = await resolveWrapperToSource(CHAIN_UNDER_TEST, WRAPPER, {
+      ...OPTS,
+      bypassCache: true,
+    });
+
+    expect(contractReads).toBeGreaterThan(afterCachedRead);
+    expect(fresh.pushAddress.toLowerCase()).toBe(OTHER_WRAPPER);
+  });
+
   it('does not cache negative results', async () => {
     // A first export creates a mapping that did not exist. A cached negative
     // would make the SDK permanently wrong about a token that now works.

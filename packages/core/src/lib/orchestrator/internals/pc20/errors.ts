@@ -277,3 +277,25 @@ export class PC20ExportRevertedError extends PC20Error {
     this.revertRecipient = ctx.revertRecipient;
   }
 }
+
+/**
+ * A wrapper burn was about to be submitted without any Push-side payload.
+ *
+ * Until every supported Push Chain version treats selector-only PC20 payloads
+ * as an empty payload, broadcasting this shape can burn the wrapper and leave
+ * the canonical token permanently locked. The SDK therefore fails closed.
+ */
+export class PC20UnsafeEmptyPayloadError extends PC20Error {
+  constructor(ctx: PC20ErrorContext = {}) {
+    super(
+      'PC20_UNSAFE_EMPTY_PAYLOAD',
+      'Refusing to submit a PC20 burn without a Push-side forwarding payload.',
+      {
+        hint:
+          'Prepare the transaction again with an SDK version that always ' +
+          'attaches the PC20 transfer payload.',
+        ...ctx,
+      }
+    );
+  }
+}

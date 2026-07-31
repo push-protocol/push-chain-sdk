@@ -3,7 +3,13 @@ import type {
   ExecuteParams,
   PC20TokenReference,
 } from '../../../orchestrator.types';
-import { assertLegacyFunds, isPC20Transaction } from '../gate';
+import {
+  assertLegacyFunds,
+  assertPC20ImportHasPayload,
+  isPC20ImportWithFunds,
+  isPC20Transaction,
+} from '../gate';
+import { PC20UnsafeEmptyPayloadError } from '../errors';
 import { CHAIN } from '../../../../constants/enums';
 import type { MoveableToken } from '../../../../constants/tokens';
 
@@ -70,6 +76,61 @@ describe('PC20 gate', () => {
     } as ExecuteParams;
     expect(isPC20Transaction(params)).toBe(true);
     expect(() => assertLegacyFunds(params)).toThrow(/without.*resolution/i);
+  });
+});
+
+describe('PC20 import payload safety', () => {
+  const resolvedImport = {
+    funds: { amount: BigInt(1) },
+    _pc20: {
+      direction: 'import' as const,
+      originChain: CHAIN.ETHEREUM_SEPOLIA,
+      originAddress: PC20.address,
+      pushAddress: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as `0x${string}`,
+      name: 'Rain',
+      symbol: 'RAIN',
+      decimals: 18,
+      chainNamespace: 'eip155:11155111',
+    },
+  };
+
+  it('recognizes only resolved imports with a positive wrapper amount', () => {
+    expect(isPC20ImportWithFunds(resolvedImport)).toBe(true);
+    expect(
+      isPC20ImportWithFunds({
+        ...resolvedImport,
+        funds: { amount: BigInt(0) },
+      })
+    ).toBe(false);
+    expect(
+      isPC20ImportWithFunds({
+        ...resolvedImport,
+        _pc20: { ...resolvedImport._pc20, direction: 'export' as const },
+      })
+    ).toBe(false);
+  });
+
+  it('fails closed before a resolved wrapper burn can carry an empty payload', () => {
+    expect(() =>
+      assertPC20ImportHasPayload(resolvedImport, false, 'test path')
+    ).toThrow(PC20UnsafeEmptyPayloadError);
+
+    try {
+      assertPC20ImportHasPayload(resolvedImport, false, 'test path');
+    } catch (error) {
+      expect((error as PC20UnsafeEmptyPayloadError).code).toBe(
+        'PC20_UNSAFE_EMPTY_PAYLOAD'
+      );
+      expect((error as PC20UnsafeEmptyPayloadError).message).toMatch(
+        /No transaction was submitted/
+      );
+    }
+  });
+
+  it('allows the same import once a real forwarding payload exists', () => {
+    expect(() =>
+      assertPC20ImportHasPayload(resolvedImport, true, 'test path')
+    ).not.toThrow();
   });
 });
 

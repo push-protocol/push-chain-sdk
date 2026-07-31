@@ -36,6 +36,7 @@ export {
   PC20UnknownChainNamespaceError,
   PC20WrapperPredictionUnavailableError,
   PC20ExportRevertedError,
+  PC20UnsafeEmptyPayloadError,
 } from './orchestrator/internals/pc20/errors';
 
 // Multi-chain types

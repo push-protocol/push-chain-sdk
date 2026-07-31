@@ -24,13 +24,50 @@ import { getPushChainForNetwork } from '../helpers';
 import { resolvePC20Token, type ResolvedPC20 } from './resolver';
 import { isPushChain } from './chain-namespace';
 import {
+  PC20UnsafeEmptyPayloadError,
   PC20TokenChainMismatchError,
   PC20RegistryMismatchError,
 } from './errors';
 
+type PC20AwareParams = {
+  funds?: { amount: bigint };
+  _pc20?: ResolvedPC20;
+};
+
 /** True when this transaction's funds are a PC20 reference. */
 export function isPC20Transaction(params: ExecuteParams): boolean {
   return isPC20Reference(params.funds?.token);
+}
+
+/** True only for a resolved, funds-bearing external-wrapper burn. */
+export function isPC20ImportWithFunds(params: PC20AwareParams): boolean {
+  return (
+    params._pc20?.direction === 'import' &&
+    (params.funds?.amount ?? BigInt(0)) > BigInt(0)
+  );
+}
+
+/**
+ * Fail closed before a wrapper burn can be broadcast without a real user
+ * payload behind the PC20 selector.
+ */
+export function assertPC20ImportHasPayload(
+  params: PC20AwareParams,
+  hasPayload: boolean,
+  path: string
+): void {
+  if (!isPC20ImportWithFunds(params) || hasPayload) return;
+
+  const descriptor = params._pc20;
+  if (!descriptor) return;
+  throw new PC20UnsafeEmptyPayloadError({
+    chain: String(descriptor.originChain),
+    address: descriptor.originAddress,
+    chainNamespace: descriptor.chainNamespace,
+    hint:
+      `${path} produced an empty return payload. ` +
+      'No transaction was submitted; prepare it again with a fixed SDK.',
+  });
 }
 
 /**
@@ -167,6 +204,9 @@ export async function revalidatePreparedPC20(
       // Tier A only. Tier B already passed at prepare time and its subjects
       // (factory identity, deployed bytecode) do not change without a redeploy.
       tierB: false,
+      // Prepared transactions must compare against live registry state rather
+      // than the positive result cached while they were constructed.
+      bypassCache: true,
     }
   );
 
