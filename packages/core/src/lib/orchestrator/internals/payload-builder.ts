@@ -130,6 +130,31 @@ export async function buildGatewayPayloadAndGas(
   const gasAmount = execute.value ?? BigInt(0);
   const ueaAddress = computeUEAOffchain(ctx);
 
+  /**
+   * `req.recipient` for the gateway request.
+   *
+   * Normally `address(0)`, the protocol's "attribute funds to the caller's
+   * UEA" sentinel. It is only ever read on routes that resolve it — the chain
+   * overwrites `recipient` with zero for non-CEA payload-type inbounds
+   * (`x/uexecutor/types/inbound.go`), and the gateway's ERC20 route sends any
+   * excess native value down the GAS path, where zero is handled.
+   *
+   * A PC20 burn is the exception. `UniversalGateway._routePC20Tx` forwards the
+   * post-fee native value as a *FUNDS* request (not GAS, unlike the ERC20
+   * route) while copying this `recipient` verbatim. A FUNDS inbound deposits
+   * straight to `inbound.Recipient`, so a zero there makes the chain mint the
+   * prepaid gas to `address(0)` and revert — the deposit is silently lost.
+   * Verified by eth_call: `depositPRC20Token(pETH, amount, 0x0)` reverts,
+   * the same call with the UEA succeeds.
+   *
+   * Naming the UEA explicitly is a no-op for the PC20 burn event itself (the
+   * chain zeroes it for that leg regardless) and makes the native leg credit
+   * the account the gateway already intends: "route excess native value as a
+   * standard FUNDS transfer to caller's UEA".
+   */
+  const requestRecipient =
+    execute._pc20?.direction === 'import' ? ueaAddress : zeroAddress;
+
   if (type === 'sendTxWithFunds') {
     if (!execute.funds?.token)
       throw new Error(`Invalid ${execute.funds?.token}`);
@@ -163,7 +188,7 @@ export async function buildGatewayPayloadAndGas(
     const req = buildUniversalTxRequest(
       ctx.universalSigner.account.address as `0x${string}`,
       {
-        recipient: zeroAddress,
+        recipient: requestRecipient,
         token: tokenAddress,
         amount: execute.funds?.amount as bigint,
         payload: encodeUniversalPayload(universalPayload),
@@ -237,7 +262,7 @@ export async function buildGatewayPayloadAndGas(
     const req = buildUniversalTxRequest(
       ctx.universalSigner.account.address as `0x${string}`,
       {
-        recipient: zeroAddress,
+        recipient: requestRecipient,
         token: tokenAddress,
         amount: execute.funds?.amount as bigint,
         payload: encodedPayload,
@@ -245,7 +270,7 @@ export async function buildGatewayPayloadAndGas(
     );
 
     printLog(ctx, 'sendFunds — final req: ' + JSON.stringify({
-      recipient: zeroAddress,
+      recipient: requestRecipient,
       token: tokenAddress,
       amount: (execute.funds?.amount as bigint)?.toString(),
       payloadLength: encodedPayload.length,

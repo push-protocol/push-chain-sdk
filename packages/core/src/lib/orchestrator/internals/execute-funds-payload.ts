@@ -348,13 +348,16 @@ export async function executeFundsWithPayload(
   let response: UniversalTxResponse;
   try {
     let pushChainUniversalTx: UniversalTx | undefined;
+    const isPc20Import = execute._pc20?.direction === 'import';
     if (CHAIN_INFO[ctx.universalSigner.account.chain].vm === VM.EVM) {
       pushChainUniversalTx = await queryUniversalTxStatusFromGatewayTx(
-        ctx, evmClient as EvmClient, gatewayAddress as `0x${string}`, txHash as `0x${string}`, 'sendTxWithFunds'
+        ctx, evmClient as EvmClient, gatewayAddress as `0x${string}`, txHash as `0x${string}`, 'sendTxWithFunds',
+        isPc20Import
       );
     } else {
       pushChainUniversalTx = await queryUniversalTxStatusFromGatewayTx(
-        ctx, undefined, undefined, txHash as string, 'sendTxWithFunds'
+        ctx, undefined, undefined, txHash as string, 'sendTxWithFunds',
+        isPc20Import
       );
     }
     response = await extractPcTxAndTransform(ctx, pushChainUniversalTx, txHash as string, eventBuffer, 'sendTxWithFunds', transformFn);

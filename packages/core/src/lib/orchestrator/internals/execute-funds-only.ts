@@ -300,7 +300,8 @@ async function executeFundsOnlyEvm(
   try {
     const pushChainUniversalTx = await queryUniversalTxStatusFromGatewayTx(
       ctx, evmClient, gatewayAddress, txHash,
-      execute.to === ueaAddress ? 'sendFunds' : 'sendTxWithFunds'
+      execute.to === ueaAddress ? 'sendFunds' : 'sendTxWithFunds',
+      execute._pc20?.direction === 'import'
     );
     // extractPcTxAndTransform fires 199-02 itself on pcTx FAILED; only emit
     // for non-typed failures (RPC lookup error, timeout).
@@ -461,7 +462,10 @@ async function executeFundsOnlySvm(
 
   let response: UniversalTxResponse;
   try {
-    const pushChainUniversalTx = await queryUniversalTxStatusFromGatewayTx(ctx, undefined, undefined, txSignature, 'sendFunds');
+    const pushChainUniversalTx = await queryUniversalTxStatusFromGatewayTx(
+      ctx, undefined, undefined, txSignature, 'sendFunds',
+      execute._pc20?.direction === 'import'
+    );
     response = await extractPcTxAndTransform(ctx, pushChainUniversalTx, txSignature, eventBuffer, 'sendFunds (SVM)', transformFn);
   } catch (err) {
     if (!(err instanceof PushChainExecutionError)) {

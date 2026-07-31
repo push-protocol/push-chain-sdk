@@ -108,12 +108,18 @@ export function skipNote(what: string, reason: string): void {
  * transfer itself succeeds and conserves value, but the UTX carries a FAILED
  * pcTx, so `wait()` throws `PushChainExecutionError`.
  *
- * Until the chain fix ships, suites assert on balances and treat exactly this
- * failure signature as tolerable. Any other error is rethrown — this must not
- * become a blanket error swallow. Flip `TOLERATE_FEE_CREDIT_BUG` to false once
- * the fix lands to make the suites strict again.
+ * RESOLVED 2026-07-31 — tolerance is now OFF by default. The root cause was
+ * the zero `req.recipient` the SDK sent: the gateway forwards the post-fee
+ * native value as a FUNDS request copying that recipient, and a FUNDS inbound
+ * deposits straight to it, so the chain was minting the prepaid gas to
+ * `address(0)`. A PC20 burn now names the UEA, and both inbound legs settle
+ * SUCCESS live (burn tx 0xf35f7a346354aab3db57ae8f03bb463cf3eba9ce5f5948bbc6707ebf2bb33b88).
+ *
+ * Set `PC20_TOLERATE_FEE_CREDIT=1` to re-enable tolerance if a regression is
+ * suspected; delete these helpers once this has held for a while.
  */
-export const TOLERATE_FEE_CREDIT_BUG = true;
+export const TOLERATE_FEE_CREDIT_BUG =
+  process.env['PC20_TOLERATE_FEE_CREDIT'] === '1';
 
 function isKnownFeeCreditFailure(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);

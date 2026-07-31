@@ -10,6 +10,7 @@ import { Connection } from '@solana/web3.js';
 import {
   bytesToHex,
   decodeAbiParameters,
+  decodeEventLog,
   decodeFunctionData,
   getAddress,
   keccak256,
@@ -17,6 +18,8 @@ import {
   stringToBytes,
   toBytes,
 } from 'viem';
+import { EVENT_UNIVERSAL_TX } from '../../universal-tx-detector/events';
+import { PC20_SELECTOR } from './pc20/export';
 import { UEA_EVM } from '../../constants/abi/uea.evm';
 import { CHAIN_INFO, VM_NAMESPACE } from '../../constants/chain';
 import { CHAIN, VM } from '../../constants/enums';
@@ -89,13 +92,66 @@ function fanOut(
 // queryUniversalTxStatusFromGatewayTx
 // ============================================================================
 
+/**
+ * Pick the gateway log whose event is the PC20 burn — the leg that carries the
+ * user's transfer.
+ *
+ * A PC20 return with a prepaid gas deposit makes the gateway emit TWO
+ * `UniversalTx` events from one user tx: the PC20 burn (payload prefixed with
+ * the `PC20` selector) and, second, a plain FUNDS event for the attached
+ * native value. Each becomes its own UTX on Push. The default "last gateway
+ * log" heuristic therefore selects the *fee-credit* leg, so a failure there
+ * (see the known fee-credit bug) is reported as the whole transfer failing —
+ * even though the tokens arrived via the first leg.
+ *
+ * Identification is by payload prefix rather than log order: the selector is
+ * what the gateway itself stamps on the PC20 leg, so it stays correct if the
+ * emission order ever changes. Returns null when no PC20 leg is present, and
+ * the caller keeps its existing behaviour.
+ */
+export function findPC20GatewayLogIndex(
+  ctx: OrchestratorContext,
+  gatewayLogs: Array<{ topics?: unknown; data?: unknown; logIndex?: unknown }>
+): number | null {
+  for (let i = 0; i < gatewayLogs.length; i++) {
+    const log = gatewayLogs[i];
+    try {
+      const decoded = decodeEventLog({
+        abi: [EVENT_UNIVERSAL_TX],
+        data: log.data as `0x${string}`,
+        topics: log.topics as [`0x${string}`, ...`0x${string}`[]],
+      }) as { args?: { payload?: string } };
+      const payload = decoded.args?.payload;
+      if (
+        typeof payload === 'string' &&
+        payload.toLowerCase().startsWith(PC20_SELECTOR.toLowerCase())
+      ) {
+        printLog(
+          ctx,
+          `queryUniversalTxStatus — PC20 leg found at gateway log ${i} ` +
+            `(logIndex ${String(log.logIndex)}); tracking it instead of the last log`
+        );
+        return i;
+      }
+    } catch {
+      // Not a UniversalTx event (or an ABI we do not model) — skip it.
+    }
+  }
+  return null;
+}
+
 export async function queryUniversalTxStatusFromGatewayTx(
   ctx: OrchestratorContext,
   evmClient: EvmClient | undefined,
   gatewayAddress: `0x${string}` | undefined,
   // DEBUG: section marker added
   txHash: string,
-  evmGatewayMethod: 'sendFunds' | 'sendTxWithFunds' | 'sendTxWithGas'
+  evmGatewayMethod: 'sendFunds' | 'sendTxWithFunds' | 'sendTxWithGas',
+  /**
+   * Set for PC20 imports (wrapper burns). Selects the PC20 burn leg rather
+   * than the last gateway log — see {@link findPC20GatewayLogIndex}.
+   */
+  preferPC20Log = false
 ): Promise<UniversalTx | undefined> {
   try {
     const chain = ctx.universalSigner.account.chain;
@@ -128,8 +184,13 @@ export async function queryUniversalTxStatusFromGatewayTx(
       printLog(ctx, 'queryUniversalTxStatus — gatewayLogs: ' + JSON.stringify(
         gatewayLogs.map((l: any) => ({ address: l.address, logIndex: l.logIndex, topics: l.topics?.[0] })),
         null, 2));
-      // Use the last gateway log to derive the log index
-      const logIndexToUse = gatewayLogs.length - 1;
+      // Use the last gateway log to derive the log index, except for a PC20
+      // import, where the last log is the fee-credit leg rather than the
+      // user's transfer (see findPC20GatewayLogIndex).
+      const pc20LogIndex = preferPC20Log
+        ? findPC20GatewayLogIndex(ctx, gatewayLogs as any[])
+        : null;
+      const logIndexToUse = pc20LogIndex ?? gatewayLogs.length - 1;
       const firstLog = (gatewayLogs[logIndexToUse] ||
         (receipt.logs || []).at(-1)) as any;
       const logIndexVal = firstLog?.logIndex ?? 0;
@@ -160,7 +221,7 @@ export async function queryUniversalTxStatusFromGatewayTx(
         commitment: 'confirmed',
       } as any);
       // Derive proper log index using discriminator matching
-      const svmLogIndex = getSvmGatewayLogIndexFromTx(txResp);
+      const svmLogIndex = getSvmGatewayLogIndexFromTx(txResp, preferPC20Log);
       logIndexStr = String(svmLogIndex);
     }
 
