@@ -1,3 +1,13 @@
+@pushchain/core@6.0.21 (2026-08-01)
+
+- fix: pc20 bug fix
+- fix: bug fixes
+- fix: pc20 e2es and bug fixes
+- feat: pc20 fixes
+- fix: pc20 plan
+
+---
+
 @pushchain/core@6.1.0 (unreleased)
 
 - Added first-class PC20 support to the universal transaction API. PC20 tokens
