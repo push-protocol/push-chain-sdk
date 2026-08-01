@@ -241,6 +241,12 @@ const STAKING_EXAMPLE_ABI = [
 // ============================================================================
 const OUTBOUND_MSG_VALUE = parseEther('50'); // 50 PC — covers current gas swap, excess refunded to StakingExample
 
+// The inbound smart-contract call is executed in a CacheContext and committed only
+// after its Push Chain gas fee is deducted. These values are caps: the chain charges
+// the actual base fee, but rejects (and rolls back) zero/undersized gas fields.
+const INBOUND_EXECUTION_GAS_LIMIT = BigInt(500_000);
+const INBOUND_MAX_FEE_PER_GAS = BigInt(10_000_000_000); // 10 gwei cap; Donut currently uses 1 gwei
+
 async function computeOutboundMsgValue(
   pushPublicClient: ReturnType<typeof createPublicClient>,
   ueaAddress: `0x${string}`,
@@ -347,8 +353,8 @@ describe('CEA Custom Contract: StakingExample (Outbound & Inbound)', () => {
             to: ZERO_ADDRESS,
             value: BigInt(0),
             data: payloadData,
-            gasLimit: BigInt(0),
-            maxFeePerGas: BigInt(0),
+            gasLimit: INBOUND_EXECUTION_GAS_LIMIT,
+            maxFeePerGas: INBOUND_MAX_FEE_PER_GAS,
             maxPriorityFeePerGas: BigInt(0),
             nonce: BigInt(0),
             deadline: BigInt(0),
@@ -459,8 +465,8 @@ describe('CEA Custom Contract: StakingExample (Outbound & Inbound)', () => {
           to: ZERO_ADDRESS,
           value: BigInt(0),
           data: payloadData,
-          gasLimit: BigInt(0),
-          maxFeePerGas: BigInt(0),
+          gasLimit: INBOUND_EXECUTION_GAS_LIMIT,
+          maxFeePerGas: INBOUND_MAX_FEE_PER_GAS,
           maxPriorityFeePerGas: BigInt(0),
           nonce: BigInt(0),
           deadline: BigInt(0),
@@ -962,8 +968,8 @@ describe('CEA Custom Contract: StakingExample (Outbound & Inbound)', () => {
               to: ZERO_ADDRESS,
               value: BigInt(0),
               data: payloadData,
-              gasLimit: BigInt(0),
-              maxFeePerGas: BigInt(0),
+              gasLimit: INBOUND_EXECUTION_GAS_LIMIT,
+              maxFeePerGas: INBOUND_MAX_FEE_PER_GAS,
               maxPriorityFeePerGas: BigInt(0),
               nonce: BigInt(0),
               deadline: BigInt(0),
@@ -1090,8 +1096,8 @@ describe('CEA Custom Contract: StakingExample (Outbound & Inbound)', () => {
               to: ZERO_ADDRESS,
               value: BigInt(0),
               data: payloadData,
-              gasLimit: BigInt(0),
-              maxFeePerGas: BigInt(0),
+              gasLimit: INBOUND_EXECUTION_GAS_LIMIT,
+              maxFeePerGas: INBOUND_MAX_FEE_PER_GAS,
               maxPriorityFeePerGas: BigInt(0),
               nonce: BigInt(0),
               deadline: BigInt(0),
@@ -1688,7 +1694,7 @@ describe('CEA Custom Contract: StakingExample (Outbound & Inbound)', () => {
               ],
             },
           ],
-          [{ to: ZERO_ADDRESS, value: BigInt(0), data: payloadData, gasLimit: BigInt(0), maxFeePerGas: BigInt(0), maxPriorityFeePerGas: BigInt(0), nonce: BigInt(0), deadline: BigInt(0), vType: 1 }]
+          [{ to: ZERO_ADDRESS, value: BigInt(0), data: payloadData, gasLimit: INBOUND_EXECUTION_GAS_LIMIT, maxFeePerGas: INBOUND_MAX_FEE_PER_GAS, maxPriorityFeePerGas: BigInt(0), nonce: BigInt(0), deadline: BigInt(0), vType: 1 }]
         );
 
         const sendBackCalldata = encodeFunctionData({

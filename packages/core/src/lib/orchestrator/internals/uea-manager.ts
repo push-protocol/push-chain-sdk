@@ -118,6 +118,14 @@ export async function getUEANonce(
   address: `0x${string}`
 ): Promise<bigint> {
   const chain = ctx.universalSigner.account.chain;
+
+  // A Push-native signer is an EOA, even when EIP-7702 delegation makes
+  // eth_getCode return a non-empty 0xef0100... designator. It uses the EVM
+  // transaction nonce and must never be queried through the UEA ABI.
+  if (isPushChain(chain)) {
+    return BigInt(0);
+  }
+
   const { vm } = CHAIN_INFO[chain];
 
   switch (vm) {
@@ -140,7 +148,13 @@ export async function getUEANonce(
   }
 }
 
-export async function getUeaNonceForExecution(ctx: OrchestratorContext): Promise<bigint> {
+export async function getUeaNonceForExecution(
+  ctx: OrchestratorContext
+): Promise<bigint> {
+  if (isPushChain(ctx.universalSigner.account.chain)) {
+    return BigInt(0);
+  }
+
   const UEA = computeUEAOffchain(ctx);
   const code = await ctx.pushClient.publicClient.getCode({ address: UEA });
   return code !== undefined ? await getUEANonce(ctx, UEA) : BigInt(0);
@@ -150,6 +164,12 @@ export async function getUeaStatusAndNonce(ctx: OrchestratorContext): Promise<{
   deployed: boolean;
   nonce: bigint;
 }> {
+  // Native Push accounts do not have a UEA. In particular, EIP-7702
+  // delegation code must not be mistaken for a deployed UEA proxy.
+  if (isPushChain(ctx.universalSigner.account.chain)) {
+    return { deployed: false, nonce: BigInt(0) };
+  }
+
   const UEA = computeUEAOffchain(ctx);
   const code = await ctx.pushClient.publicClient.getCode({ address: UEA });
   const deployed = code !== undefined;

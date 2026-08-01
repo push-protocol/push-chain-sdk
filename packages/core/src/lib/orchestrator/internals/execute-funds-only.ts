@@ -20,7 +20,7 @@ import { getOriginEvmClient } from './context';
 import { SvmClient } from '../../vm-client/svm-client';
 import type { TxResponse } from '../../vm-client/vm-client.types';
 import type {
-  ExecuteParams,
+  LegacyExecuteParams,
   UniversalTxResponse,
 } from '../orchestrator.types';
 import type { OrchestratorContext } from './context';
@@ -41,6 +41,7 @@ import { waitForEvmConfirmationsWithCountdown, waitForSvmConfirmationsWithCountd
 import { queryUniversalTxStatusFromGatewayTx } from './response-builder';
 import { extractPcTxAndTransform, PushChainExecutionError } from './push-chain-tx';
 import { buildSvmUniversalTxRequest, getSvmProtocolFee } from './svm-helpers';
+import { buildPC20BurnAccounts } from './pc20/svm';
 import { fetchOriginChainTransactionForProgress } from './helpers';
 import type { ResponseBuilderCallbacks } from './response-builder';
 import { transformToUniversalTxResponse } from './response-builder';
@@ -48,7 +49,7 @@ import { normalizePublicErrorMessage } from '../../formatters';
 
 export async function executeFundsOnly(
   ctx: OrchestratorContext,
-  execute: ExecuteParams,
+  execute: LegacyExecuteParams,
   eventBuffer: ProgressEvent[],
   getResponseCallbacks: () => ResponseBuilderCallbacks
 ): Promise<UniversalTxResponse> {
@@ -99,7 +100,7 @@ export async function executeFundsOnly(
 
 async function executeFundsOnlyEvm(
   ctx: OrchestratorContext,
-  execute: ExecuteParams,
+  execute: LegacyExecuteParams,
   eventBuffer: ProgressEvent[],
   transformFn: (tx: TxResponse, buf?: ProgressEvent[]) => Promise<UniversalTxResponse>,
   chain: CHAIN,
@@ -251,7 +252,12 @@ async function executeFundsOnlyEvm(
 
   fireProgressHook(ctx, PROGRESS_HOOK.SEND_TX_106_01, execute.funds!.amount, execute.funds!.token!.decimals, symbol);
 
-  // Approve gateway to pull tokens if ERC-20
+  // Approve gateway to pull tokens if ERC-20.
+  //
+  // A PC20 wrapper is deliberately NOT approved. The gateway's configured
+  // PC20Factory burns it directly via `burnFrom(sourceAsset, caller, amount)`,
+  // so an allowance here would be granted and never used — a pointless
+  // approval tx and a standing allowance on the user's wrapper balance.
   if (execute.funds!.token!.mechanism === 'approve') {
     await ensureErc20Allowance(ctx, evmClient, tokenAddr, gatewayAddress, execute.funds!.amount);
   } else if (execute.funds!.token!.mechanism === 'permit2') {
@@ -294,7 +300,8 @@ async function executeFundsOnlyEvm(
   try {
     const pushChainUniversalTx = await queryUniversalTxStatusFromGatewayTx(
       ctx, evmClient, gatewayAddress, txHash,
-      execute.to === ueaAddress ? 'sendFunds' : 'sendTxWithFunds'
+      execute.to === ueaAddress ? 'sendFunds' : 'sendTxWithFunds',
+      execute._pc20?.direction === 'import'
     );
     // extractPcTxAndTransform fires 199-02 itself on pcTx FAILED; only emit
     // for non-typed failures (RPC lookup error, timeout).
@@ -319,7 +326,7 @@ async function executeFundsOnlyEvm(
 
 async function executeFundsOnlySvm(
   ctx: OrchestratorContext,
-  execute: ExecuteParams,
+  execute: LegacyExecuteParams,
   eventBuffer: ProgressEvent[],
   transformFn: (tx: TxResponse, buf?: ProgressEvent[]) => Promise<UniversalTxResponse>,
   chain: CHAIN,
@@ -400,6 +407,47 @@ async function executeFundsOnlySvm(
         systemProgram: SystemProgram.programId,
       },
     });
+  } else if (execute.funds!.token!.mechanism === 'pc20-burn') {
+    // NOTE: currently unreachable from sendTransaction — the orchestrator
+    // routes SVM PC20 imports through the funds+payload path (svm-bridge),
+    // because a pure burn's empty payload gets the PC20 selector prepended by
+    // the gateway and classified FUNDS_AND_PAYLOAD, which the chain's inbound
+    // decode bricks on with no revert (the selector-only "0x" guard bug).
+    // Kept correct as the pure-burn shape for when that chain fix ships.
+    //
+    // PC20 wrapper burn — route_pc20_universal_tx (deposit.rs). Differs from
+    // the SPL escrow route in four program-enforced ways: the recipient must
+    // be the nonzero Push recipient (the chain unlocks directly to it), the
+    // gateway token account must be ABSENT (burn, not escrow),
+    // remaining_accounts must be exactly [pc20_state ro, pc20_mint w], and
+    // token_rate_limit is null — a pure burn consumes no per-token rate limit,
+    // and this call sends exactly the inbound fee, so there is no post-fee
+    // native excess to route as a (rate-limited) FUNDS leg. The gateway
+    // prepends the PC20 selector itself — the SDK must not.
+    const mintPk = new PublicKey(execute.funds!.token!.address);
+    const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+    const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+    const userAta = PublicKey.findProgramAddressSync(
+      [userPk.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mintPk.toBuffer()], ASSOCIATED_TOKEN_PROGRAM_ID
+    )[0];
+    const { remainingAccounts } = buildPC20BurnAccounts({ programId, mint: mintPk });
+
+    const reqBurn = buildSvmUniversalTxRequest({
+      recipient: recipientEvm20, token: mintPk, amount: bridgeAmount,
+      payload: '0x', revertRecipient: userPk, signatureData: '0x',
+    });
+    txSignature = await svmClient.writeContract({
+      abi: SVM_GATEWAY_IDL, address: programId.toBase58(), functionName: 'sendUniversalTx',
+      args: [reqBurn, protocolFeeLamports], signer: ctx.universalSigner,
+      accounts: {
+        config: configPda, vault: vaultPda, feeVault: feeVaultPda,
+        userTokenAccount: userAta, gatewayTokenAccount: null, user: userPk,
+        tokenProgram: TOKEN_PROGRAM_ID, priceUpdate: priceUpdatePk,
+        rateLimitConfig: rateLimitConfigPda, tokenRateLimit: null,
+        systemProgram: SystemProgram.programId,
+      },
+      remainingAccounts,
+    });
   } else {
     throw new Error('Unsupported token mechanism on Solana');
   }
@@ -414,7 +462,10 @@ async function executeFundsOnlySvm(
 
   let response: UniversalTxResponse;
   try {
-    const pushChainUniversalTx = await queryUniversalTxStatusFromGatewayTx(ctx, undefined, undefined, txSignature, 'sendFunds');
+    const pushChainUniversalTx = await queryUniversalTxStatusFromGatewayTx(
+      ctx, undefined, undefined, txSignature, 'sendFunds',
+      execute._pc20?.direction === 'import'
+    );
     response = await extractPcTxAndTransform(ctx, pushChainUniversalTx, txSignature, eventBuffer, 'sendFunds (SVM)', transformFn);
   } catch (err) {
     if (!(err instanceof PushChainExecutionError)) {

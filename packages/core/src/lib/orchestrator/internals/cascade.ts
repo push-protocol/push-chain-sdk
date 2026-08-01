@@ -1,3 +1,10 @@
+import {
+  assertLegacyFunds,
+  assertPC20ImportHasPayload,
+  gateFunds,
+  isPC20ImportWithFunds,
+  revalidatePreparedPC20,
+} from './pc20/gate';
 /**
  * Cascade composition functions extracted from Orchestrator.
  *
@@ -11,6 +18,7 @@ import { ERC20_EVM } from '../../constants/abi/erc20.evm';
 import { CHAIN_INFO, UNIVERSAL_GATEWAY_ADDRESSES } from '../../constants/chain';
 import { CHAIN, PUSH_NETWORK, VM } from '../../constants/enums';
 import { MoveableToken } from '../../constants/tokens';
+import { isPC20Reference } from '../orchestrator.types';
 import {
   DEFAULT_CEA_TO_PUSH_GAS_LIMIT,
   DEFAULT_OUTBOUND_GAS_LIMIT,
@@ -51,6 +59,7 @@ import type {
   UniversalTxResponse,
   UniversalExecuteParams,
   ExecuteParams,
+  LegacyExecuteParams,
   MultiCall,
   ChainTarget,
   CascadeExecutionOptions,
@@ -91,7 +100,12 @@ import {
 } from '../../progress-hook/progress-hook.types';
 import { buildSvmPayloadFromParams } from '../svm-idl/build-payload';
 import { runPreflight, maybeFireSvmWarnThreshold } from './preflight';
-import { ensureSvmFinalizeGasBudgetQuote } from './svm-rent';
+import {
+  deriveAtaPubkey,
+  ensureSvmFinalizeGasBudgetQuote,
+} from './svm-rent';
+import { buildPC20SvmCeaBurnPayload } from './pc20/svm';
+import type { ResolvedPC20 } from './pc20/resolver';
 import { InsufficientUEABalanceError } from './errors';
 import { fireProgressHook } from './context';
 import {
@@ -197,10 +211,23 @@ export async function prepareTransaction(
     }
   }
 
+  // PC20 resolution for a prepared transaction.
+  //
+  // A prepared tx is signed now and sent later, so the registry state it was
+  // built against can move in between — most importantly, a first export can
+  // land and create a mapping that did not exist at prepare time. The
+  // descriptor is therefore resolved here to build the payload, and
+  // deliberately NOT cached as authoritative: `revalidatePreparedPC20` re-runs
+  // the critical reads at send time.
+  const preparedParams = (await gateFunds(
+    ctx,
+    params as unknown as ExecuteParams
+  )) as unknown as UniversalExecuteParams;
+
   // Build the payload based on route
   const { payload, gatewayRequest } = await buildPayloadForRoute(
     ctx,
-    params,
+    preparedParams,
     route,
     nonce
   );
@@ -210,7 +237,12 @@ export async function prepareTransaction(
     params.deadline || BigInt(Math.floor(Date.now() / 1000) + 3600);
 
   // Build the HopDescriptor with all metadata needed for cascade nesting
-  const hop = await buildHopDescriptor(ctx, params, route, ueaAddress);
+  const hop = await buildHopDescriptor(
+    ctx,
+    preparedParams,
+    route,
+    ueaAddress
+  );
 
   const prepared: PreparedUniversalTx = {
     route,
@@ -273,7 +305,7 @@ export async function buildHopDescriptor(
         };
       }
 
-      const executeParams = toExecuteParams(params);
+      const executeParams = assertLegacyFunds(toExecuteParams(params));
       const pushMulticalls = buildExecuteMulticall({
         execute: executeParams,
         ueaAddress,
@@ -611,7 +643,16 @@ export async function buildHopDescriptor(
         if (params.funds?.amount && params.funds.amount > BigInt(0)) {
           amount = params.funds.amount;
           const token = (params.funds as { token: MoveableToken }).token;
-          if (token && token.address) {
+          const pc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+          if (pc20?.direction === 'import') {
+            // PC20 CEA burns use the native PRC-20 only for the outbound
+            // relay's chain namespace and gas. The wrapper amount is carried
+            // inside the Solana self-call and must not be burned on Push.
+            prc20Token = getNativePRC20ForChain(
+              sourceChain,
+              ctx.pushNetwork
+            );
+          } else if (token && token.address) {
             prc20Token = PushChain.utils.tokens.getPRC20Address(token).address;
           } else {
             prc20Token = getNativePRC20ForChain(sourceChain, ctx.pushNetwork);
@@ -954,16 +995,25 @@ function getRootFundsDeposit(
       continue;
     }
 
+    // Token identity across hops. Compared on the fields both union members
+    // share (address) plus, for MoveableTokens, symbol/mechanism. A PC20
+    // reference is identified by chain+address alone — it has no symbol or
+    // mechanism to compare, and its chain is what distinguishes two wrappers
+    // that happen to share an address on different chains.
     const currentToken = rootFunds.token;
     const nextToken = funds.token;
     const sameToken =
       currentToken === nextToken ||
       (!!currentToken &&
         !!nextToken &&
-        currentToken.address.toLowerCase() ===
-          nextToken.address.toLowerCase() &&
-        currentToken.symbol === nextToken.symbol &&
-        currentToken.mechanism === nextToken.mechanism);
+        currentToken.address.toLowerCase() === nextToken.address.toLowerCase() &&
+        isPC20Reference(currentToken) === isPC20Reference(nextToken) &&
+        (isPC20Reference(currentToken) && isPC20Reference(nextToken)
+          ? currentToken.chain === nextToken.chain
+          : (currentToken as MoveableToken).symbol ===
+              (nextToken as MoveableToken).symbol &&
+            (currentToken as MoveableToken).mechanism ===
+              (nextToken as MoveableToken).mechanism));
 
     if (!sameToken) {
       throw new Error(
@@ -1328,14 +1378,18 @@ export async function composeCascadeDetailed(
     }
   }
 
-  // EVM cascade outbounds should follow the direct R2 path: use the live
-  // WPC/gasToken quote instead of blindly spending the flat balance split.
-  // Over-allocating into thin pETH/pBNB pools can revert with Uniswap "STF"
-  // before the gateway has a chance to refund unused PC.
+  // Every EVM gas-bearing segment should follow the direct-route path: use the
+  // live WPC/gasToken quote instead of blindly spending the flat balance split.
+  // This includes Route 3 wrappers, which also call sendUniversalTxOutbound on
+  // Push Chain before the source CEA can return. A fixed ceiling below the live
+  // exact-output requirement deterministically reverts inside Uniswap with
+  // `STF`; the caller-facing maxPCForGas field is the explicit spend ceiling.
   const evmSegments = segments.filter(
     (s) =>
-      s.type === 'OUTBOUND_TO_CEA' &&
-      s.hops[0]?.isSvmTarget !== true &&
+      segmentNeedsOutboundGas(s) &&
+      ((s.type === 'OUTBOUND_TO_CEA' && s.hops[0]?.isSvmTarget !== true) ||
+        (s.type === 'INBOUND_FROM_CEA' &&
+          !isSvmChain(s.sourceChain as CHAIN))) &&
       s.gasToken &&
       s.gasFee &&
       s.gasFee > BigInt(0)
@@ -1343,29 +1397,20 @@ export async function composeCascadeDetailed(
   const evmNativeValueBySegment = new Map<CascadeSegment, bigint>();
   if (evmSegments.length > 0 && effectiveUeaBalance > CASCADE_GAS_RESERVE) {
     const universalCoreAddress = await getUniversalCoreAddressForSwap();
-    const ONE_PC = BigInt('1000000000000000000');
-    const EVM_NATIVE_VALUE_SAFETY_CAP_CASCADE = BigInt(200) * ONE_PC;
     const UNCAPPED_BALANCE = BigInt('1000000000000000000000000000000');
     for (const seg of evmSegments) {
-      let value = await estimateNativeValueForSwap(
+      const value = await estimateNativeValueForSwap(
         ctx,
         universalCoreAddress,
         seg.gasToken as `0x${string}`,
         seg.gasFee as bigint,
         UNCAPPED_BALANCE
       );
-      if (value > EVM_NATIVE_VALUE_SAFETY_CAP_CASCADE) {
-        printLog(
-          ctx,
-          `composeCascade — EVM outbound to ${
-            seg.targetChain
-          }: capping nativeValueForGas at 200 PC ceiling (was ${value.toString()})`
-        );
-        value = EVM_NATIVE_VALUE_SAFETY_CAP_CASCADE;
-      }
       printLog(
         ctx,
-        `composeCascade — EVM outbound to ${seg.targetChain}: gasFee=${
+        `composeCascade — EVM outbound to ${
+          seg.targetChain ?? seg.sourceChain
+        }: gasFee=${
           seg.gasFee
         }, quotedNativeValue=${value}, flat=${
           perOutboundNativeValue ?? BigInt(0)
@@ -1627,13 +1672,20 @@ export async function composeCascadeDetailed(
         // UEA multicall so no nested outbound is needed.
         const mergedHopMulticalls: MultiCall[] = [];
         for (const h of segment.hops) {
-          if (hasExecutablePayloadData(h?.params?.data) || h?.params?.value) {
+          const pc20Forward = isPC20ImportWithFunds(h.params);
+          if (
+            hasExecutablePayloadData(h?.params?.data) ||
+            h?.params?.value ||
+            pc20Forward
+          ) {
             const hopCalls = buildExecuteMulticall({
-              execute: {
-                to: h.params.to as `0x${string}`,
-                value: h.params.value,
-                data: h.params.data,
-              },
+              execute: (pc20Forward
+                ? assertLegacyFunds(toExecuteParams(h.params))
+                : {
+                    to: h.params.to as `0x${string}`,
+                    value: h.params.value,
+                    data: h.params.data,
+                  }) as LegacyExecuteParams,
               ueaAddress,
               allowSelfValueCall: true,
             });
@@ -1663,6 +1715,14 @@ export async function composeCascadeDetailed(
           intermediatePayload = isSvmChain(sourceChain)
             ? buildInboundUniversalPayloadSvm(multicallPayload, { nonce })
             : buildInboundUniversalPayload(multicallPayload, { nonce });
+        }
+
+        for (const segmentHop of segment.hops) {
+          assertPC20ImportHasPayload(
+            segmentHop.params,
+            intermediatePayload !== '0x',
+            `Cascaded Route 3 ${sourceChain}`
+          );
         }
 
         // SVM chains: build SVM CPI payload instead of EVM CEA multicall
@@ -1701,19 +1761,38 @@ export async function composeCascadeDetailed(
           const ceaPdaHex = ('0x' +
             Buffer.from(ceaPda.toBytes()).toString('hex')) as `0x${string}`;
 
-          // Build SVM payload with intermediate Push Chain payload embedded
-          const svmPayload = encodeSvmCeaToUeaPayload({
-            gatewayProgramHex,
-            drainAmount,
-            tokenMintHex,
-            revertRecipientHex: ceaPdaHex,
-            extraPayload:
-              intermediatePayload !== '0x'
-                ? new Uint8Array(
-                    Buffer.from(intermediatePayload.slice(2), 'hex')
-                  )
-                : undefined,
-          });
+          // Build SVM payload with intermediate Push Chain payload embedded.
+          // PC20 burns use the gateway's dedicated send_universal_tx shape;
+          // SPL/native drains keep send_universal_tx_to_uea.
+          const extraPayload =
+            intermediatePayload !== '0x'
+              ? new Uint8Array(
+                  Buffer.from(intermediatePayload.slice(2), 'hex')
+                )
+              : undefined;
+          const pc20 = (params as { _pc20?: ResolvedPC20 })._pc20;
+          let svmPayload: `0x${string}`;
+          if (isPC20ImportWithFunds(params) && pc20) {
+            const mintPk = new PublicKey(pc20.originAddress);
+            const fields = buildPC20SvmCeaBurnPayload({
+              gatewayProgram: programPk,
+              mint: mintPk,
+              ceaAuthority: ceaPda,
+              ceaAta: deriveAtaPubkey(ceaPda, mintPk),
+              ueaAddress,
+              amount: drainAmount,
+              pushPayload: extraPayload ?? new Uint8Array(0),
+            });
+            svmPayload = encodeSvmExecutePayload(fields);
+          } else {
+            svmPayload = encodeSvmCeaToUeaPayload({
+              gatewayProgramHex,
+              drainAmount,
+              tokenMintHex,
+              revertRecipientHex: ceaPdaHex,
+              extraPayload,
+            });
+          }
           assertSvmPayloadWithinRelayLimit(
             svmPayload,
             `Route 3 SVM cascade ${sourceChain}`
@@ -1863,7 +1942,9 @@ export async function composeCascadeDetailed(
           evmInboundFallback = inboundGasFee * BigInt(1000000);
         }
         let evmInboundNativeValue =
-          perOutboundNativeValue ?? evmInboundFallback;
+          evmNativeValueBySegment.get(segment) ??
+          perOutboundNativeValue ??
+          evmInboundFallback;
         // SDK 5.2 R3-style Case C bump: when the inbound segment's sizing
         // is C, top up the swap budget by the overflow. No bridge-swap —
         // R3 has no destination funds delivery.
@@ -1897,6 +1978,18 @@ export async function composeCascadeDetailed(
         break;
       }
     }
+  }
+
+  if (requiredNativeValue > BigInt(0)) {
+    runPreflight({
+      ctx,
+      ueaAddress,
+      ueaBalance: effectiveUeaBalance,
+      requiredValue: requiredNativeValue,
+      gasReserve: CASCADE_GAS_RESERVE,
+      pathTag: 'CASCADE',
+      enforceGasCheck,
+    });
   }
 
   return {
@@ -1983,6 +2076,19 @@ export function createCascadedBuilder(
 
       // Extract HopDescriptors
       const hops = preparedTxs.map((tx) => tx._hop);
+
+      // Prepared PC20 imports pin registry-derived identity into their
+      // payload. Re-check that binding immediately before any route is
+      // executed or composed; a stale descriptor must never reach broadcast.
+      await Promise.all(
+        hops.map((hop) =>
+          revalidatePreparedPC20(
+            ctx,
+            hop.params as unknown as LegacyExecuteParams
+          )
+        )
+      );
+
       const enforceGasCheck =
         options?.enforceGasCheck === true ||
         hops.some((hop) => hop.params.options?.enforceGasCheck === true);

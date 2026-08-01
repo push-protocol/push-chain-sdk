@@ -47,13 +47,25 @@ export interface WriteContractParams extends ReadContractParams {
   value?: bigint; // value in ether
   signer: UniversalSigner;
   /**
-   * **For Solana only** Dynamic accounts to pass to the solana program instruction
+   * **For Solana only** Dynamic accounts to pass to the solana program
+   * instruction. `null` is valid for accounts the IDL marks `optional` —
+   * Anchor substitutes the program id as the on-wire "none" placeholder.
    */
-  accounts?: Record<string, PublicKey>;
+  accounts?: Record<string, PublicKey | null>;
   /**
    * **For Solana only** Keypairs that should sign the transaction
    */
   extraSigners?: Keypair[];
+  /**
+   * **For Solana only** Positional accounts appended after the instruction's
+   * named accounts. Order and flags are program-defined — e.g. the PC20 burn
+   * requires exactly `[pc20_state readonly, pc20_mint writable]`.
+   */
+  remainingAccounts?: Array<{
+    pubkey: PublicKey;
+    isSigner: boolean;
+    isWritable: boolean;
+  }>;
 }
 
 export type TxResponse = Transaction & {

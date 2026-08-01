@@ -20,6 +20,152 @@ export type ChainTarget = {
 };
 
 /**
+ * A dynamic PC20 token, identified by chain and address alone.
+ *
+ * PC20 mappings live in UniversalCore's on-chain registry, not in the SDK's
+ * static token tables, so there is nothing to look a symbol up in — identity is
+ * address-and-chain, always.
+ *
+ * `chain` is where the token *is*, never where it is going:
+ *   - external wrapper → Push: the external chain the wrapper is deployed on
+ *   - Push → external:   the Push chain the canonical token lives on
+ * `to.chain` is the destination and is a separate field.
+ *
+ * The canonical form is `{ chain, address }` — nothing else. Discrimination
+ * from `MoveableToken` relies on what a PC20 reference does NOT have:
+ * `MoveableToken` requires `symbol` and `mechanism`, so their absence is the
+ * discriminator (see {@link isPC20Reference}, the single predicate). This
+ * stays sound even if `MoveableToken` grows optional fields, because the
+ * check keys on its required ones.
+ *
+ * Do NOT add `symbol` to a PC20 reference — a present `symbol` makes the
+ * object a `MoveableToken` and routes it down the static-table path (the
+ * route validator names this mistake explicitly when it happens).
+ */
+export type PC20TokenReference = {
+  chain: CHAIN;
+  /** Chain-native: checksummed hex on EVM, base58 on Solana. */
+  address: string;
+};
+
+/**
+ * Token accepted by `funds.token`.
+ *
+ * `MoveableToken` continues through the PRC20/native path unchanged;
+ * `PC20TokenReference` routes through the registry resolver.
+ */
+export type FundsToken =
+  | import('../constants').MoveableToken
+  | PC20TokenReference;
+
+/**
+ * The single runtime discriminator for {@link FundsToken}.
+ *
+ * Every module must use this rather than re-deriving the check by inspecting
+ * fields — a second copy is how the two branches drift apart.
+ */
+export function isPC20Reference(
+  token: FundsToken | undefined
+): token is PC20TokenReference {
+  if (!token) return false;
+  const candidate = token as Partial<PC20TokenReference> &
+    Partial<import('../constants').MoveableToken>;
+  // chain + address, and none of MoveableToken's required fields. Keying on
+  // the ABSENCE of required MoveableToken fields keeps this sound even if
+  // MoveableToken grows optional fields later.
+  return (
+    typeof candidate.chain === 'string' &&
+    typeof candidate.address === 'string' &&
+    candidate.symbol === undefined &&
+    candidate.mechanism === undefined
+  );
+}
+
+/**
+ * `ExecuteParams` after the PC20 gate has run.
+ *
+ * The public `funds.token` accepts either a `MoveableToken` or a
+ * `PC20TokenReference`. The legacy PRC20/native execution path only ever
+ * handles the former, so it types against this narrowed shape and a single
+ * gate (`resolveFundsToken` in the orchestrator) decides which branch a
+ * transaction takes.
+ *
+ * Narrowing here rather than at each of the ~24 `execute.funds!.token.symbol`
+ * call sites keeps the existing path provably untouched: if a PC20 reference
+ * ever reached it, that would be a type error, not a runtime `undefined`.
+ *
+ * Phase 2 adds the PC20 branch alongside this; it does not widen this type.
+ */
+export type LegacyExecuteParams = Omit<ExecuteParams, 'funds'> & {
+  funds?: {
+    amount: bigint;
+    token?: InternalFundsToken;
+  };
+  /**
+   * Set by the PC20 gate when `funds.token` was a `PC20TokenReference`.
+   * Authoritative for every PC20 behavioral decision — the `funds.token` view
+   * above only carries the display/encoding fields the shared path reads.
+   */
+  _pc20?: import('./internals/pc20/resolver').ResolvedPC20;
+};
+
+/**
+ * Internal view of a funds token inside the execution path.
+ *
+ * A PC20 gets a `'pc20-burn'` mechanism rather than being flattened into a fake
+ * `MoveableToken`. The distinction matters at three points, and a fake would be
+ * wrong at all of them:
+ *   - `'approve'` would make the SDK approve a wrapper that the gateway's
+ *     factory burns directly via `burnFrom` — an approval that is never used.
+ *   - `'native'` would attach the bridge amount as msg.value.
+ *   - the Push-side transfer must target the resolved PC20, not
+ *     `getPRC20Address`.
+ */
+export type InternalFundsToken =
+  | import('../constants').MoveableToken
+  | {
+      symbol: string;
+      decimals: number;
+      address: string;
+      mechanism: 'pc20-burn';
+    };
+
+/**
+ * One known address of a PC20 token — an external wrapper deployment, or the
+ * canonical Push-native token itself.
+ *
+ * Shape matches `getMoveableTokens`' entries (`chain` + `chainName`) so both
+ * token APIs read the same way.
+ */
+export type PC20RegistryEntry = {
+  /** Chain-native: checksummed hex on EVM, base58 on Solana. */
+  address: string;
+  /** CAIP-2 chain id, e.g. `'eip155:11155111'`. */
+  chain: CHAIN;
+  /** Human-readable chain key, e.g. `'ETHEREUM_SEPOLIA'`. */
+  chainName: string;
+};
+
+/** Result of `PushChain.utils.tokens.getPC20Address`. */
+export type PC20AddressResult = {
+  /** Canonical Push-native PC20 address. */
+  address: `0x${string}`;
+  name: string;
+  symbol: string;
+  decimals: number;
+  network: import('../constants/enums').PUSH_NETWORK;
+  /**
+   * Every confirmed address for this token: external wrapper deployments in
+   * SDK chain order, then the Push-native entry last.
+   *
+   * Confirmed only. A predicted first-export wrapper address never appears
+   * here — that stays internal to the outbound builder, because publishing an
+   * address that does not exist yet invites callers to send to it.
+   */
+  registry: PC20RegistryEntry[];
+};
+
+/**
  * Source chain for CEA-originated transactions (Routes 3, 4)
  * Specifies which CEA domain submits the transaction
  * NOTE: This does NOT represent where the user signed from
@@ -160,7 +306,7 @@ export type ExecuteParams = {
    */
   funds?: {
     amount: bigint; // smallest units of the token
-    token?: import('../constants').MoveableToken; // if omitted, defaults to native token for origin chain
+    token?: FundsToken; // if omitted, defaults to native token for origin chain
   };
 
   /**

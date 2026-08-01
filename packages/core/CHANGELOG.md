@@ -1,3 +1,41 @@
+@pushchain/core@6.1.0 (unreleased)
+
+- Added first-class PC20 support to the universal transaction API. PC20 tokens
+  are resolved from their chain and address through UniversalCore, without an
+  explicit token-standard flag.
+
+- Added `PushChain.utils.tokens.getPC20Address()` for resolving either a
+  Push-native PC20 or an external wrapper and listing its confirmed deployments.
+  Spending paths also validate registry identity and reject wrong-chain,
+  ambiguous, stale, or unregistered token references before approval or
+  broadcast.
+
+- Added PC20 execution across EVM and Solana for Route 1 (external wrapper burn
+  to Push), Route 2 (Push token export), and Route 3 (CEA-held wrapper return).
+  This includes first-export wrapper prediction, Solana ATA delivery and
+  fallback behavior, PC20 gas quoting, and typed PC20 errors. Route 4 remains
+  unsupported for PC20.
+
+- Fixed funds-only PC20 returns and cascades producing a selector-only
+  `0x50433230` payload. The SDK now preserves PC20 routing metadata, builds a
+  complete universal forwarding payload on EVM and Solana, revalidates prepared
+  sends against the live registry, and fails closed when no safe payload can be
+  constructed.
+
+- Fixed PC20 return tracking when a gateway transaction emits both a wrapper
+  burn event and a native gas-credit event. Tracking now follows the PC20 burn
+  leg by payload selector instead of relying on event position.
+
+- Fixed prepaid native gas credit on PC20 burns by using the sender's executor
+  account as the gateway recipient instead of the zero address, preventing the
+  forwarded funds leg from attempting to credit `address(0)`.
+
+- Realigned inbound protobuf fields with the chain, exposed PC20 inbound
+  metadata, and added SVM remaining-account support required by the Solana
+  gateway.
+
+---
+
 @pushchain/core@6.0.20 (2026-07-10)
 
 - fix: support custom EIP-7702 signers and dynamic multicall gas

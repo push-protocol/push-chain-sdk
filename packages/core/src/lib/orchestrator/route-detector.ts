@@ -15,6 +15,7 @@ import type {
   ChainTarget,
   TransactionRouteType,
 } from './orchestrator.types';
+import { isPC20Reference } from './orchestrator.types';
 import { isSvmChain } from './payload-builders';
 import { hasExecutablePayloadData } from './data-utils';
 import { toSvmHexAddress } from './svm-idl/normalize-address';
@@ -299,7 +300,18 @@ export function validateRouteParams(
   // - Route 3/4 (CEA_TO_PUSH, CEA_TO_CEA): validate against from.chain.
   // For a Push-registered PRC-20 the token's own `sourceChain` must match; for a
   // non-Push token, the token's symbol must be registered on the chain.
-  if (params.funds?.token) {
+  // PC20 funds skip the moveable-token validation (and only that — the address
+  // checks below still run). The static table is symbol-keyed and PC20 identity
+  // is never symbol-based; the PC20 gate validates chain ownership against the
+  // live registry, which is strictly stronger than anything this block can
+  // check. Two shapes qualify: an unresolved `PC20TokenReference`
+  // (validateRouteParams can run before the gate, e.g. in prepareTransaction)
+  // and the gate's resolved output (`_pc20` descriptor present).
+  const isPc20Funds =
+    (params as { _pc20?: unknown })._pc20 !== undefined ||
+    isPC20Reference(params.funds?.token as never);
+
+  if (params.funds?.token && !isPc20Funds) {
     const token = params.funds.token as MoveableToken;
     const clientLabel = context?.clientChain
       ? chainEnumToName(context.clientChain)
@@ -333,11 +345,19 @@ export function validateRouteParams(
         ? effectiveSourceChain === chain
         : (MOVEABLE_TOKENS[chain] || []).some(t => t.symbol === token.symbol);
       if (!ok) {
+        // A PC20 reference is { chain, address } ONLY. If a caller added a
+        // symbol to one, it classified as a MoveableToken and landed here —
+        // say so instead of leaving them to puzzle over the static table.
+        const pc20Hint =
+          'chain' in (token as unknown as Record<string, unknown>)
+            ? '\nIf this is a PC20 token, pass { chain, address } only — no symbol or mechanism.'
+            : '';
         throw new RouteValidationError(
           `Unsupported moveable token for current client and route:\n` +
             `token=${tokenLabel}\n` +
             `clientChain=${clientLabel}\n` +
-            `${direction}=${chainEnumToName(chain)}`
+            `${direction}=${chainEnumToName(chain)}` +
+            pc20Hint
         );
       }
     };

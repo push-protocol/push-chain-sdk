@@ -74,6 +74,34 @@ function extractSendToUeaPayload(svmPayload: `0x${string}`): `0x${string}` {
   return extractSendToUeaArgs(svmPayload).payload;
 }
 
+function extractPc20SendArgs(svmPayload: `0x${string}`): {
+  accountCount: number;
+  amount: bigint;
+  payload: `0x${string}`;
+} {
+  const bytes = hexToBytes(svmPayload);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const accountCount = view.getUint32(0, false);
+  const ixLenOffset = 4 + accountCount * 33;
+  const ixDataOffset = ixLenOffset + 4;
+
+  // send_universal_tx ix_data layout:
+  // 8-byte discriminator, 20-byte recipient, 32-byte mint, u64 amount LE,
+  // u32 payload_len LE, payload, revert pubkey, signature vec, native amount.
+  const amountOffset = ixDataOffset + 8 + 20 + 32;
+  const amount = view.getBigUint64(amountOffset, true);
+  const payloadLenOffset = amountOffset + 8;
+  const payloadLen = view.getUint32(payloadLenOffset, true);
+  const payloadOffset = payloadLenOffset + 4;
+  const payloadBytes = bytes.slice(payloadOffset, payloadOffset + payloadLen);
+
+  return {
+    accountCount,
+    amount,
+    payload: `0x${Buffer.from(payloadBytes).toString('hex')}`,
+  };
+}
+
 function decodeSvmInboundUniversalPayload(payload: `0x${string}`): {
   data: `0x${string}`;
   nonce: bigint;
@@ -195,6 +223,52 @@ describe('buildPayloadForRoute — SVM Route 3', () => {
     expect(sendToUeaArgs.amount).toBe(BigInt(5_000));
     expect(inboundPayload.data.startsWith(UEA_MULTICALL_SELECTOR)).toBe(true);
     expect(inboundPayload.nonce).toBe(BigInt(1));
+  });
+
+  it('uses the PC20 CEA-burn instruction and always embeds a forwarding payload', async () => {
+    const wrapperMint = MOVEABLE_TOKEN_CONSTANTS.SOLANA_DEVNET.USDT.address;
+    const amount = BigInt(8_000);
+    const params = {
+      from: { chain: CHAIN.SOLANA_DEVNET } as ChainSource,
+      to: PUSH_EOA,
+      funds: {
+        amount,
+        token: {
+          symbol: 'RAIN',
+          decimals: 6,
+          address: wrapperMint,
+          mechanism: 'pc20-burn' as const,
+        },
+      },
+      _pc20: {
+        direction: 'import' as const,
+        originChain: CHAIN.SOLANA_DEVNET,
+        originAddress: wrapperMint,
+        pushAddress: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as `0x${string}`,
+        name: 'Rain',
+        symbol: 'RAIN',
+        decimals: 6,
+        chainNamespace: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+      },
+    } as unknown as UniversalExecuteParams;
+
+    const { payload, gatewayRequest } = await buildPayloadForRoute(
+      makeCtx(),
+      params,
+      TransactionRoute.CEA_TO_PUSH,
+      BigInt(7)
+    );
+
+    const outbound = gatewayRequest as UniversalOutboundTxRequest;
+    const pc20Send = extractPc20SendArgs(payload);
+    const inboundPayload = decodeSvmInboundUniversalPayload(pc20Send.payload);
+
+    expect(outbound.amount).toBe(BigInt(0));
+    expect(pc20Send.accountCount).toBe(4);
+    expect(pc20Send.amount).toBe(amount);
+    expect(pc20Send.payload).not.toBe('0x');
+    expect(inboundPayload.data.startsWith(UEA_MULTICALL_SELECTOR)).toBe(true);
+    expect(inboundPayload.nonce).toBe(BigInt(8));
   });
 });
 

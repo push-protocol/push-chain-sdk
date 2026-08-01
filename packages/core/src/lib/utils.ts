@@ -21,7 +21,15 @@ import {
 import { SYNTHETIC_PUSH_ERC20 } from './constants/chain';
 import { UniversalAccount } from './universal/universal.types';
 import type { PushChain } from './push-chain/push-chain';
-import { encodeFunctionData, formatUnits } from 'viem';
+import { encodeFunctionData, formatUnits, getAddress } from 'viem';
+import type { PC20AddressResult } from './orchestrator/orchestrator.types';
+import {
+  resolvePC20Token,
+  listPC20Deployments,
+  discoverPC20Chain,
+} from './orchestrator/internals/pc20/resolver';
+import { PC20WrapperNotRegisteredError } from './orchestrator/internals/pc20/errors';
+import { getPushChainForNetwork } from './orchestrator/internals/helpers';
 import { Buffer } from 'buffer';
 import type { Idl } from '@coral-xyz/anchor';
 import {
@@ -934,6 +942,102 @@ export class Utils {
         symbol: tokenSymbol,
         decimals: tokenDecimals,
         network,
+      };
+    },
+
+    /**
+     * Resolve a PC20 token against UniversalCore's on-chain registry, and list
+     * every confirmed address it has across chains.
+     *
+     * Accepts either end of the mapping — an external wrapper or the canonical
+     * Push-native token — and always returns the canonical token at `address`,
+     * with every known deployment in `registry`.
+     *
+     * Unlike `getPRC20Address`, this is **asynchronous**: PC20 mappings are
+     * dynamic and live on chain, so there is no static table to consult. It is
+     * never symbol-based — identity is address-and-chain only.
+     *
+     * `chain` is optional. When omitted, the SDK works out which chain the
+     * address belongs to. Note the deliberate asymmetry with the transaction
+     * path: `funds.token` still *requires* `chain`, and sending with one that
+     * disagrees with where the funds actually are is rejected before any
+     * approval. Lookup is lenient; spending is not.
+     *
+     * @example
+     * ```ts
+     * const token = await PushChain.utils.tokens.getPC20Address('0xWrapper', {
+     *   chain: CONSTANTS.CHAIN.ETHEREUM_SEPOLIA, // optional
+     *   network: CONSTANTS.PUSH_NETWORK.TESTNET_DONUT,
+     * });
+     *
+     * token.address   // '0x…' canonical Push-native PC20
+     * token.registry  // [{ address, chain, chainName }, …]
+     * ```
+     *
+     * @throws {PC20WrapperNotRegisteredError} the address is unknown to the registry
+     * @throws {PC20RegistryMismatchError} forward/reverse registry disagreement
+     * @throws {PC20ExpectedButPRC20Error} a synthetic PRC20 was supplied
+     * @throws {PC20AmbiguousAddressError} `chain` omitted and several chains
+     *   claim the address with different Push sources
+     */
+    async getPC20Address(
+      address: string,
+      options: {
+        network: PUSH_NETWORK;
+        /** Where the address lives. Omit to have the SDK work it out. */
+        chain?: CHAIN;
+        rpcUrls?: Partial<Record<CHAIN, string[]>>;
+        /** Also run live factory-identity checks. Slower; off by default. */
+        strict?: boolean;
+      }
+    ): Promise<PC20AddressResult> {
+      const resolverOpts = {
+        network: options.network,
+        rpcUrls: options.rpcUrls,
+        strict: options.strict,
+      };
+
+      let chain = options.chain;
+      if (!chain) {
+        const discovered = await discoverPC20Chain(address, resolverOpts);
+        if (!discovered) {
+          throw new PC20WrapperNotRegisteredError({
+            address,
+            hint:
+              'No PC20 registration found on any supported chain. If you know ' +
+              'the chain, pass it as `chain` for a more specific error.',
+          });
+        }
+        chain = discovered.chain;
+      }
+
+      const resolved = await resolvePC20Token(chain, address, resolverOpts);
+
+      // Confirmed deployments across every supported external chain — one
+      // multicall, since they all read UniversalCore on Push.
+      const deployments = await listPC20Deployments(
+        resolved.pushAddress,
+        resolverOpts
+      );
+
+      const pushChain = getPushChainForNetwork(options.network);
+      const entry = (addr: string, c: CHAIN) => ({
+        address: addr,
+        chain: c,
+        chainName: Utils.chains.getChainName(c) ?? c,
+      });
+
+      return {
+        address: resolved.pushAddress,
+        name: resolved.name,
+        symbol: resolved.symbol,
+        decimals: resolved.decimals,
+        network: options.network,
+        registry: [
+          ...deployments.map((d) => entry(d.address, d.chain)),
+          // Canonical token last, matching the reviewed example.
+          entry(resolved.pushAddress, pushChain),
+        ],
       };
     },
   };

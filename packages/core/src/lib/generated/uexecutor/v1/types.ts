@@ -48,9 +48,23 @@ export interface Inbound {
   recipient: string;
   amount: string;
   assetAddr: string;
+  /** Field 7 — log index that originated the cross-chain tx. */
+  logIndex: string;
+  /** Field 8. Was previously numbered 7 here, which did not match the chain. */
   txType: number;
   universalPayload?: UniversalPayload | undefined;
   verificationData: string;
+  /** Field 12 — this inbound was initiated by a CEA. */
+  isCea: boolean;
+  /** Field 13 — hex-encoded raw payload bytes from the source-chain event. */
+  rawPayload: string;
+  /**
+   * Field 14 — the raw payload carried the PC20 selector, i.e. this is a PC20
+   * return (burn the wrapper on the source chain, unlock the locked Push-native
+   * token). Set by the chain during NormalizeForTxType, after the selector has
+   * been stripped, so the selector is not visible in `universalPayload`.
+   */
+  isPc20: boolean;
 }
 
 export interface PCTx {
@@ -237,9 +251,13 @@ function createBaseInbound(): Inbound {
     recipient: "",
     amount: "",
     assetAddr: "",
+    logIndex: "",
     txType: 0,
     universalPayload: undefined,
     verificationData: "",
+    isCea: false,
+    rawPayload: "",
+    isPc20: false,
   };
 }
 
@@ -263,14 +281,26 @@ export const Inbound: MessageFns<Inbound> = {
     if (message.assetAddr !== "") {
       writer.uint32(50).string(message.assetAddr);
     }
+    if (message.logIndex !== "") {
+      writer.uint32(58).string(message.logIndex);
+    }
     if (message.txType !== 0) {
-      writer.uint32(56).int32(message.txType);
+      writer.uint32(64).int32(message.txType);
     }
     if (message.universalPayload !== undefined) {
-      UniversalPayload.encode(message.universalPayload, writer.uint32(66).fork()).join();
+      UniversalPayload.encode(message.universalPayload, writer.uint32(74).fork()).join();
     }
     if (message.verificationData !== "") {
-      writer.uint32(74).string(message.verificationData);
+      writer.uint32(82).string(message.verificationData);
+    }
+    if (message.isCea !== false) {
+      writer.uint32(96).bool(message.isCea);
+    }
+    if (message.rawPayload !== "") {
+      writer.uint32(106).string(message.rawPayload);
+    }
+    if (message.isPc20 !== false) {
+      writer.uint32(112).bool(message.isPc20);
     }
     return writer;
   },
@@ -331,19 +361,19 @@ export const Inbound: MessageFns<Inbound> = {
           continue;
         }
         case 7: {
-          if (tag !== 56) {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.logIndex = reader.string();
+          continue;
+        }
+        case 8: {
+          if (tag !== 64) {
             break;
           }
 
           message.txType = reader.int32();
-          continue;
-        }
-        case 8: {
-          if (tag !== 66) {
-            break;
-          }
-
-          message.universalPayload = UniversalPayload.decode(reader, reader.uint32());
           continue;
         }
         case 9: {
@@ -351,7 +381,39 @@ export const Inbound: MessageFns<Inbound> = {
             break;
           }
 
+          message.universalPayload = UniversalPayload.decode(reader, reader.uint32());
+          continue;
+        }
+        case 10: {
+          if (tag !== 82) {
+            break;
+          }
+
           message.verificationData = reader.string();
+          continue;
+        }
+        case 12: {
+          if (tag !== 96) {
+            break;
+          }
+
+          message.isCea = reader.bool();
+          continue;
+        }
+        case 13: {
+          if (tag !== 106) {
+            break;
+          }
+
+          message.rawPayload = reader.string();
+          continue;
+        }
+        case 14: {
+          if (tag !== 112) {
+            break;
+          }
+
+          message.isPc20 = reader.bool();
           continue;
         }
       }
@@ -374,11 +436,15 @@ export const Inbound: MessageFns<Inbound> = {
     message.recipient = object.recipient ?? "";
     message.amount = object.amount ?? "";
     message.assetAddr = object.assetAddr ?? "";
+    message.logIndex = object.logIndex ?? "";
     message.txType = object.txType ?? 0;
     message.universalPayload = (object.universalPayload !== undefined && object.universalPayload !== null)
       ? UniversalPayload.fromPartial(object.universalPayload)
       : undefined;
     message.verificationData = object.verificationData ?? "";
+    message.isCea = object.isCea ?? false;
+    message.rawPayload = object.rawPayload ?? "";
+    message.isPc20 = object.isPc20 ?? false;
     return message;
   },
 };

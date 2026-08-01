@@ -170,6 +170,12 @@ export function toExecuteParams(params: UniversalExecuteParams): ExecuteParams {
     value: params.value,
     data: params.data,
     funds: params.funds,
+    // Internal PC20 descriptor must survive param transformation — the payload
+    // builders branch on it, and losing it here silently reroutes a resolved
+    // PC20 through the static synthetic-token lookup (which throws).
+    ...(('_pc20' in params)
+      ? { _pc20: (params as { _pc20?: unknown })._pc20 }
+      : {}),
     gasLimit: params.gasLimit,
     maxPCForGas: params.maxPCForGas,
     maxFeePerGas: params.maxFeePerGas,

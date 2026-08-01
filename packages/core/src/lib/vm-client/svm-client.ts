@@ -165,6 +165,7 @@ export class SvmClient {
     args = [],
     accounts = {},
     extraSigners = [],
+    remainingAccounts = [],
   }: WriteContractParams): Promise<string> {
     // 1. Grab or build your RPC connection however your class manages it
     const connection = this.connections[this.currentConnectionIndex];
@@ -287,6 +288,19 @@ export class SvmClient {
 
     if (Object.keys(accounts).length > 0) {
       builder = builder.accounts(accounts);
+    }
+
+    // Positional accounts appended after the instruction's named accounts.
+    // Order and flags are program-defined (e.g. the PC20 burn requires
+    // [pc20_state readonly, pc20_mint writable]) and must be passed exactly.
+    if (remainingAccounts.length > 0) {
+      builder = builder.remainingAccounts(
+        remainingAccounts.map((a) => ({
+          pubkey: a.pubkey,
+          isSigner: a.isSigner,
+          isWritable: a.isWritable,
+        }))
+      );
     }
 
     // 6. Get the actual instruction

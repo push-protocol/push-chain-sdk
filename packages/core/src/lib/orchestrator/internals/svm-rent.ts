@@ -39,6 +39,12 @@ export const SVM_EXECUTED_SUB_TX_RENT_FALLBACK = BigInt(946_560);
 /** Devnet/mainnet rent-exempt minimum for a 165-byte SPL token account. */
 export const SVM_TOKEN_ACCOUNT_RENT_FALLBACK = BigInt(2_039_280);
 
+/** Rent-exempt minimum for an 82-byte SPL mint — created on a first PC20 export. */
+export const SVM_MINT_RENT_FALLBACK = BigInt(1_461_600);
+
+/** Rent-exempt minimum for the 62-byte Pc20State PDA (state.rs: 8+20+32+1+1). */
+export const SVM_PC20_STATE_RENT_FALLBACK = BigInt(1_322_400);
+
 /** Back-compat export for older tests/callers: ATA rent + base finalization overhead. */
 export const CEA_ATA_RENT_LAMPORTS_BUMP =
   SVM_SIGNATURE_FEE_LAMPORTS +
@@ -107,6 +113,8 @@ export interface SvmFinalizeGasBudgetInput {
   splMintBase58: string | undefined;
   /** Burn amount in token units. 0 means no SPL staging. */
   burnAmount: bigint;
+  /** PC20 export: use the id=5 finalize rent profile instead of the SPL one. */
+  pc20?: { isFirstExport: boolean };
 }
 
 function getRpcUrl(
@@ -189,6 +197,8 @@ export async function ensureSvmFinalizeGasBudgetQuote({
   splMintBase58,
   burnAmount,
   pathTag,
+  pc20,
+  requoteFn,
 }: {
   ctx: OrchestratorContext;
   ueaAddress: `0x${string}`;
@@ -198,6 +208,14 @@ export async function ensureSvmFinalizeGasBudgetQuote({
   splMintBase58: string | undefined;
   burnAmount: bigint;
   pathTag: string;
+  /** PC20 export: switches the floor to the id=5 rent profile. */
+  pc20?: { isFirstExport: boolean };
+  /**
+   * Re-quote function for the bump path. PC20 exports MUST pass one backed by
+   * getPC20ExportGasAndFees — the default getOutboundTxGasAndFees reverts for a
+   * PC20 token, which has no PRC20 config.
+   */
+  requoteFn?: (gasLimit: bigint) => Promise<OutboundGasQuote>;
 }): Promise<OutboundGasQuote> {
   const minGasFee = await getSvmFinalizeGasBudget({
     ctx,
@@ -205,6 +223,7 @@ export async function ensureSvmFinalizeGasBudgetQuote({
     targetChain,
     splMintBase58,
     burnAmount,
+    pc20,
   });
 
   if (quote.gasFee >= minGasFee) {
@@ -227,12 +246,9 @@ export async function ensureSvmFinalizeGasBudgetQuote({
       `gasFee=${quote.gasFee.toString()} below finalize minimum=${minGasFee.toString()}`
   );
 
-  const bumpedQuote = await queryOutboundGasFee(
-    ctx,
-    prc20Token,
-    bumpedGasLimit,
-    targetChain
-  );
+  const bumpedQuote = requoteFn
+    ? await requoteFn(bumpedGasLimit)
+    : await queryOutboundGasFee(ctx, prc20Token, bumpedGasLimit, targetChain);
   if (bumpedQuote.gasFee < minGasFee) {
     printLog(
       ctx,
@@ -251,8 +267,35 @@ export async function ensureSvmFinalizeGasBudgetQuote({
 export async function getSvmFinalizeGasBudget(
   input: SvmFinalizeGasBudgetInput
 ): Promise<bigint> {
-  const { ctx, ueaAddress, targetChain, splMintBase58, burnAmount } = input;
+  const { ctx, ueaAddress, targetChain, splMintBase58, burnAmount, pc20 } = input;
   const needsSplAta = Boolean(splMintBase58) && burnAmount > BigInt(0);
+
+  // PC20 export finalize (id=5) has its own rent profile — settle_pc20_finalize_gas
+  // (pc20.rs) requires gas_fee to cover, beyond the base costs:
+  //   - CEA ATA rent for the *wrapper mint* (created at settlement);
+  //   - on a first export, the mint account (82B) and Pc20State PDA (62B) rents.
+  // The on-chain quote does not know about Solana rent, so without this floor a
+  // first export reverts InsufficientGasBudget on the destination — after the
+  // source token is locked. Fallback constants are used rather than RPC reads:
+  // the mint does not exist yet on a first export, so there is nothing to query,
+  // and rent-exempt minimums are Solana protocol values that effectively never
+  // change.
+  if (pc20) {
+    let budget =
+      SVM_SIGNATURE_FEE_LAMPORTS +
+      SVM_EXECUTED_SUB_TX_RENT_FALLBACK +
+      SVM_TOKEN_ACCOUNT_RENT_FALLBACK + // CEA ATA for the wrapper mint
+      SVM_FINALIZE_COMPUTE_BUFFER_LAMPORTS;
+    if (pc20.isFirstExport) {
+      budget += SVM_MINT_RENT_FALLBACK + SVM_PC20_STATE_RENT_FALLBACK;
+    }
+    printLog(
+      ctx,
+      `getSvmFinalizeGasBudget — PC20 budget=${budget.toString()} ` +
+        `(isFirstExport=${pc20.isFirstExport})`
+    );
+    return budget;
+  }
   const rpcUrl = getRpcUrl(ctx, targetChain);
 
   let executedTxRent = SVM_EXECUTED_SUB_TX_RENT_FALLBACK;

@@ -101,6 +101,10 @@ const REQUIRED_UEA_PBNB_BALANCE = parseEther('0.005');
 const REQUIRED_UEA_PSOL_BALANCE = BigInt(100_000_000);
 const STAKING_OUTBOUND_GAS_LIMIT = BigInt(1_000_000);
 const OUTBOUND_MSG_VALUE_FLOOR = parseEther('50');
+// The round-trip inbound call is committed only after its Push Chain gas fee is
+// deducted. These are caps; zero values cause the inbound execution to roll back.
+const INBOUND_EXECUTION_GAS_LIMIT = BigInt(500_000);
+const INBOUND_MAX_FEE_PER_GAS = BigInt(10_000_000_000);
 const LIVE_CASCADE_WAIT_TIMEOUT_MS = 2_400_000;
 const LIVE_CASCADE_TEST_TIMEOUT_MS = 3_600_000;
 
@@ -338,7 +342,7 @@ describe('Advance Hopping: Cascade API E2E', () => {
       required: REQUIRED_UEA_PSOL_BALANCE,
       decimals: 9,
     });
-  });
+  }, 120_000);
 
   // ============================================================================
   // Core Scenarios
@@ -1306,7 +1310,17 @@ describe('Advance Hopping: Cascade API E2E', () => {
             { name: 'maxPriorityFeePerGas', type: 'uint256' }, { name: 'nonce', type: 'uint256' },
             { name: 'deadline', type: 'uint256' }, { name: 'vType', type: 'uint8' },
           ]}],
-          [{ to: ZERO_ADDRESS, value: BigInt(0), data: stakePayloadData, gasLimit: BigInt(0), maxFeePerGas: BigInt(0), maxPriorityFeePerGas: BigInt(0), nonce: BigInt(0), deadline: BigInt(0), vType: 1 }]
+          [{
+            to: ZERO_ADDRESS,
+            value: BigInt(0),
+            data: stakePayloadData,
+            gasLimit: INBOUND_EXECUTION_GAS_LIMIT,
+            maxFeePerGas: INBOUND_MAX_FEE_PER_GAS,
+            maxPriorityFeePerGas: BigInt(0),
+            nonce: BigInt(0),
+            deadline: BigInt(0),
+            vType: 1,
+          }]
         );
         // USDT requires allowance reset to 0 before setting a new non-zero value
         const approveZeroCalldata = encodeFunctionData({
