@@ -43,18 +43,32 @@ import { PushChain } from '../../../src';
 //   Sepolia USDC:  5 (route1 pay_gas_erc20 — ~3 USDC real gas + buffer)
 //   Push PC:       2 (06) + 1 (route1) + 3 (route2 funds) + 4×5 (08 cascades) = 26
 const NEEDS = {
-  sepoliaEth: '0.11',
+  sepoliaEth: '0.14',
   sepoliaUsdt: '0.24',
   sepoliaUsdc: '5',
   bnb: '0.10',
   bnbUsdt: '0.04',
-  pushPC: '26',
+  pushPC: '27',
   pushPETH: '0.004',
   pushPUSDTBnb: '0.04',
   solanaSOL: '0.02',
+  // PC20 amounts are in whole tokens; decimals are read from the contract.
+  //   Push-native PC20: 1 (route2_pc20_export seeds the UEA)
+  //   Sepolia wrapper:  1 (route1_pc20_import) + 1 (route3_pc20_cea_burn)
+  pc20Push: '1',
+  pc20Wrapper: '2',
 };
 
 const pETH_PUSH = getAddress('0x2971824Db68229D087931155C2b8bB820B275809');
+
+/**
+ * PC20 addresses come from the environment — the mappings are dynamic and live
+ * on chain, so there is no static table. Rows are only added when the address
+ * is configured; the matching specs skip when it is not, so demanding a balance
+ * for an unconfigured token would fail the pre-flight for tests that will not run.
+ */
+const pc20PushToken = process.env['PC20_PUSH_TOKEN'] as `0x${string}` | undefined;
+const pc20WrapperSepolia = process.env['PC20_WRAPPER_SEPOLIA'] as `0x${string}` | undefined;
 
 const ERC20_BAL_ABI = [
   {
@@ -63,6 +77,16 @@ const ERC20_BAL_ABI = [
     stateMutability: 'view',
     inputs: [{ name: 'a', type: 'address' }],
     outputs: [{ type: 'uint256' }],
+  },
+] as const;
+
+const ERC20_DECIMALS_ABI = [
+  {
+    name: 'decimals',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint8' }],
   },
 ] as const;
 
@@ -202,6 +226,54 @@ function requireEnv(name: string): string {
     { chain: 'Push Chain',    asset: 'pUSDT(BNB)', need: NEEDS.pushPUSDTBnb, have: f6(pushPUSDT), ok: pushPUSDT >= parseUnits(NEEDS.pushPUSDTBnb, 6) },
     { chain: 'Solana Devnet', asset: 'SOL',        need: NEEDS.solanaSOL,    have: (solBal / LAMPORTS_PER_SOL).toFixed(4), ok: solBal >= Math.round(Number(NEEDS.solanaSOL) * LAMPORTS_PER_SOL) },
   ];
+
+  // PC20 rows — only when the token is configured. See the note on
+  // pc20PushToken above for why these are conditional rather than always present.
+  const pc20Row = async (
+    client: typeof sep | typeof push,
+    holder: `0x${string}`,
+    token: `0x${string}`,
+    chainLabel: string,
+    assetLabel: string,
+    need: string
+  ) => {
+    const [bal, decimals] = await Promise.all([
+      read(
+        client.readContract({
+          address: token,
+          abi: ERC20_BAL_ABI,
+          functionName: 'balanceOf',
+          args: [holder],
+        })
+      ) as Promise<bigint>,
+      read(
+        client.readContract({
+          address: token,
+          abi: ERC20_DECIMALS_ABI,
+          functionName: 'decimals',
+          args: [],
+        })
+      ) as Promise<number>,
+    ]);
+    return {
+      chain: chainLabel,
+      asset: assetLabel,
+      need,
+      have: Number(formatUnits(bal, decimals)).toFixed(4),
+      ok: bal >= parseUnits(need, decimals),
+    };
+  };
+
+  if (pc20PushToken) {
+    rows.push(
+      await pc20Row(push, pushAcc.address, pc20PushToken, 'Push Chain', 'PC20', NEEDS.pc20Push)
+    );
+  }
+  if (pc20WrapperSepolia) {
+    rows.push(
+      await pc20Row(sep, evmAcc.address, pc20WrapperSepolia, 'Sepolia', 'PC20 wrapper', NEEDS.pc20Wrapper)
+    );
+  }
 
   const w = { chain: 5, asset: 5, need: 4, have: 4, status: 6 };
   for (const r of rows) {

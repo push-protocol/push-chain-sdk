@@ -14,8 +14,10 @@ import { PublicKey } from '@solana/web3.js';
 import { PushChain } from '../../../src';
 import { CHAIN, PUSH_NETWORK } from '../../../src/lib/constants/enums';
 import { CHAIN_INFO } from '../../../src/lib/constants/chain';
+import { ethers } from 'ethers';
 import {
   fundSepoliaUoa,
+  fundSepoliaUoaUsdt,
   fundUeaPC,
   fundBnbCea,
   fundBnbCeaUsdt,
@@ -26,6 +28,7 @@ import {
   makeSolanaContext,
   fundSolanaUoa,
 } from '../_helpers/docs-fund';
+import { getPC20ReadFixtures, skipNote } from '@e2e/shared/pc20-fixtures';
 
 const COUNTER_PUSH = '0x70d8f7a0fF8e493fb9cbEE19Eb780E40Aa872aaf';
 const COUNTER_ABI = [
@@ -38,6 +41,17 @@ const solanaKey = process.env['SOLANA_PRIVATE_KEY'];
 const ROUTE3_UEA_PC_GAS_BUFFER = '250';
 const ROUTE3_BNB_CEA_TARGET = '0.001';
 const ROUTE3_LIVE_TIMEOUT_MS = 900_000;
+
+// The PC20 CEA burn needs a deployed wrapper on Sepolia — it does not exist
+// until a first export has created one.
+const pc20Fixtures = getPC20ReadFixtures();
+const pc20Ready = Boolean(evmKey && pushKey && pc20Fixtures?.wrapperSepolia);
+if (!pc20Ready) {
+  skipNote(
+    'docs-examples route3_pc20_cea_burn',
+    'needs EVM_PRIVATE_KEY + PUSH_PRIVATE_KEY + PC20_PUSH_TOKEN + PC20_WRAPPER_SEPOLIA'
+  );
+}
 
 describe('docs-examples › 07-transaction-scenarios › Route 3 (CEA_TO_PUSH)', () => {
   /**
@@ -316,5 +330,86 @@ describe('docs-examples › 07-transaction-scenarios › Route 3 (CEA_TO_PUSH)',
     const receipt = await tx.wait();
     expect(tx.hash).toMatch(/^0x[0-9a-fA-F]{64}$/);
     expect(receipt.status).toBe(1);
+  }, ROUTE3_LIVE_TIMEOUT_MS);
+
+  /**
+   * slug: send_transaction_route3_pc20_cea_burn
+   * MDX: "Bring a PC20 Back from your CEA".
+   *
+   * The CEA on Sepolia burns its PC20 wrapper balance and the canonical
+   * Push-native token is unlocked to the UEA.
+   *
+   * Uses the master key directly (not a fresh wallet) for the same reason the
+   * other Route 3 tests do: the CEA is derived from the UEA, so a fresh wallet
+   * would mean funding a brand-new CEA on every run.
+   */
+  (pc20Ready ? it : it.skip)('route3_pc20_cea_burn — burns a Sepolia CEA wrapper, unlocks on Push', async () => {
+    const sepoliaCtx = makeSepoliaContext(evmKey as Hex);
+    const pushCtx = makePushContext(pushKey as Hex);
+    const account = privateKeyToAccount(evmKey as Hex);
+    const walletClient = createWalletClient({
+      account,
+      chain: sepolia,
+      transport: http(CHAIN_INFO[CHAIN.ETHEREUM_SEPOLIA].defaultRPC[0]),
+    });
+
+    const universalSigner = await PushChain.utils.signer.toUniversalFromKeypair(walletClient, {
+      chain: CHAIN.ETHEREUM_SEPOLIA,
+      library: PushChain.CONSTANTS.LIBRARY.ETHEREUM_VIEM,
+    });
+    const client = await PushChain.initialize(universalSigner, {
+      network: PUSH_NETWORK.TESTNET_DONUT,
+      progressHook: (p) => console.log('TX Progress:', p.title || p.id),
+    });
+
+    // Mirrors the docs: derive the Sepolia CEA via the SDK, not a raw factory read.
+    const uoa = PushChain.utils.account.toUniversal(account.address, {
+      chain: CHAIN.ETHEREUM_SEPOLIA,
+    });
+    const sepoliaCea = await PushChain.utils.account.deriveExecutorAccount(uoa, {
+      chain: CHAIN.ETHEREUM_SEPOLIA,
+      skipNetworkCheck: true,
+    });
+
+    const token = await PushChain.utils.tokens.getPC20Address(
+      pc20Fixtures!.wrapperSepolia!,
+      { chain: CHAIN.ETHEREUM_SEPOLIA, network: PUSH_NETWORK.TESTNET_DONUT }
+    );
+    expect(token.address.toLowerCase()).toBe(pc20Fixtures!.pushToken.toLowerCase());
+
+    await fundSepoliaUoa(sepoliaCtx, account.address, '0.01');
+    await fundUeaPC(pushCtx, client.universal.account as `0x${string}`, ROUTE3_UEA_PC_GAS_BUFFER);
+    // The CEA needs signing gas plus the wrapper it is going to burn.
+    await fundSepoliaUoaUsdt(sepoliaCtx, sepoliaCea.address as `0x${string}`, '0.005', '1', {
+      address: pc20Fixtures!.wrapperSepolia as string,
+      decimals: token.decimals,
+    });
+
+    const pushProvider = new ethers.JsonRpcProvider(CHAIN_INFO[CHAIN.PUSH_TESTNET_DONUT].defaultRPC[0]);
+    const pushToken = new ethers.Contract(
+      token.address,
+      ['function balanceOf(address) view returns (uint256)'],
+      pushProvider
+    );
+    const before = (await pushToken['balanceOf'](client.universal.account)) as bigint;
+
+    const amount = PushChain.utils.helpers.parseUnits('1', { decimals: token.decimals });
+    const tx = await client.universal.sendTransaction({
+      from: { chain: PushChain.CONSTANTS.CHAIN.ETHEREUM_SEPOLIA }, // burn from the CEA
+      to: client.universal.account, // unlock back to self
+      funds: {
+        amount,
+        token: {
+          chain: CHAIN.ETHEREUM_SEPOLIA,
+          address: pc20Fixtures!.wrapperSepolia as string,
+        },
+      },
+    });
+    const receipt = await tx.wait();
+    expect(tx.hash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    expect(receipt.status).toBe(1);
+
+    const after = (await pushToken['balanceOf'](client.universal.account)) as bigint;
+    expect(after).toBe(before + amount);
   }, ROUTE3_LIVE_TIMEOUT_MS);
 });

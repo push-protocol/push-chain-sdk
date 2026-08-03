@@ -2,7 +2,8 @@
 
 These tests are **1:1 mirrors** of the runnable code blocks in the website docs at
 `push-chain-website/docs/chain/03-build/06-Send-Universal-Transaction.mdx`,
-`07-Universal-Transaction-Scenarios.mdx`, and `08-Send-Multichain-Transactions.mdx`.
+`07-Universal-Transaction-Scenarios.mdx`, `08-Send-Multichain-Transactions.mdx`,
+and `12-Utility-Functions.mdx`.
 
 ## Intent
 
@@ -43,9 +44,30 @@ docs-examples/
 │   ├── route1.spec.ts                                # all UOA_TO_PUSH slugs from 07-*.mdx
 │   ├── route2.spec.ts                                # all UOA_TO_CEA slugs from 07-*.mdx
 │   └── route3.spec.ts                                # all CEA_TO_PUSH slugs from 07-*.mdx
-└── 08-multichain-transactions/
-    └── multichain-transactions.spec.ts               # mirrors 08-*.mdx
+├── 08-multichain-transactions/
+│   └── multichain-transactions.spec.ts               # mirrors 08-*.mdx
+└── 12-utility-functions/
+    └── pc20.spec.ts                                  # mirrors the "Get PC20 Address" section
+                                                      # of 12-*.mdx — read-only, no signer
 ```
+
+### PC20
+
+PC20 examples appear in four places and are gated separately from the rest,
+because PC20 mappings are dynamic and live on chain — there is no static table,
+so every address comes from the environment (see `../shared/pc20-fixtures.ts`):
+
+| Spec | Slug | Needs |
+|---|---|---|
+| `12-utility-functions/pc20.spec.ts` | `utility_get_pc20_address` | `PC20_PUSH_TOKEN` (read-only, no signer) |
+| `07-.../route1.spec.ts` | `send_transaction_route1_pc20_import` | `+ EVM_PRIVATE_KEY`, `PC20_WRAPPER_SEPOLIA` |
+| `07-.../route2.spec.ts` | `send_transaction_route2_pc20_export` | `+ EVM_PRIVATE_KEY`, `PUSH_PRIVATE_KEY` |
+| `07-.../route3.spec.ts` | `send_transaction_route3_pc20_cea_burn` | `+ PUSH_PRIVATE_KEY`, `PC20_WRAPPER_SEPOLIA` |
+
+`PC20_WRAPPER_SEPOLIA` is optional because the wrapper does not exist until a
+first export creates it — `route2_pc20_export` is the test that creates one.
+Cases needing it are registered as `it.skip` and say so, rather than returning
+early from the body (which would report as PASSED while asserting nothing).
 
 Each spec file's header comment cites the **slug** and **MDX line range** it mirrors so
 that updating a docs example is a straightforward "find the matching `it()`, update both."
@@ -59,6 +81,8 @@ that updating a docs example is a straightforward "find the matching `it()`, upd
 | `EVM_PRIVATE_KEY` | Sepolia ETH (UOA signing gas), Sepolia ERC-20 USDT/USDC (bridged-in tests), and BNB Testnet BNB+USDT (Route 3 CEA funding — same hex private key, since BSC Testnet is EVM) |
 | `PUSH_PRIVATE_KEY` | Push Chain native PC (sent to fresh UEA where the docs prompt asks for `… PC + … pETH`) and any PRC-20s the master holds (pETH, pUSDT(BNB)) for Route 2 burn tests |
 | `SOLANA_PRIVATE_KEY` | Solana Devnet SOL (UOA signing gas for the SVM examples) |
+| `PC20_PUSH_TOKEN` | The Push-native PC20 on Donut. Required by every PC20 example. |
+| `PC20_WRAPPER_SEPOLIA` | Its deployed wrapper on Sepolia. Optional — see the PC20 note above. |
 
 Tests `it.skip` themselves when the env var they need is missing, so partial setups still
 run their applicable subset.
@@ -85,23 +109,29 @@ npx ts-node --transpile-only __e2e__/docs-examples/_helpers/check-balances.ts
 ```
 
 It queries each master wallet on every chain, compares the balance to the aggregate
-amount all 25 tests collectively need, and prints a table:
+amount all funds-moving tests collectively need, and prints a table:
 
 ```
-┌───────────────┬────────────┬───────┬─────────┬────────┐
-│     Chain     │   Asset    │ Need  │  Have   │ Status │
-├───────────────┼────────────┼───────┼─────────┼────────┤
-│ Sepolia       │ ETH        │  0.11 │  0.8918 │   ✓    │
-│ Sepolia       │ USDT       │  0.24 │ 9999.99 │   ✓    │
-│ Sepolia       │ USDC       │  0.10 │       0 │   ✗    │
-│ BNB Testnet   │ BNB        │  0.10 │  1.2434 │   ✓    │
-│ BNB Testnet   │ USDT       │  0.04 │     500 │   ✓    │
-│ Push Chain    │ PC         │    10 │ 4366.15 │   ✓    │
-│ Push Chain    │ pETH       │ 0.004 │   0.271 │   ✓    │
-│ Push Chain    │ pUSDT(BNB) │  0.04 │   1.198 │   ✓    │
-│ Solana Devnet │ SOL        │  0.02 │  0.0948 │   ✓    │
-└───────────────┴────────────┴───────┴─────────┴────────┘
+┌───────────────┬──────────────┬───────┬─────────┬────────┐
+│     Chain     │    Asset     │ Need  │  Have   │ Status │
+├───────────────┼──────────────┼───────┼─────────┼────────┤
+│ Sepolia       │ ETH          │  0.14 │  0.8918 │   ✓    │
+│ Sepolia       │ USDT         │  0.24 │ 9999.99 │   ✓    │
+│ Sepolia       │ USDC         │     5 │       0 │   ✗    │
+│ BNB Testnet   │ BNB          │  0.10 │  1.2434 │   ✓    │
+│ BNB Testnet   │ USDT         │  0.04 │     500 │   ✓    │
+│ Push Chain    │ PC           │    27 │ 4366.15 │   ✓    │
+│ Push Chain    │ pETH         │ 0.004 │   0.271 │   ✓    │
+│ Push Chain    │ pUSDT(BNB)   │  0.04 │   1.198 │   ✓    │
+│ Solana Devnet │ SOL          │  0.02 │  0.0948 │   ✓    │
+│ Push Chain    │ PC20         │     1 │  12.000 │   ✓    │
+│ Sepolia       │ PC20 wrapper │     2 │   3.000 │   ✓    │
+└───────────────┴──────────────┴───────┴─────────┴────────┘
 ```
+
+The two PC20 rows only appear when `PC20_PUSH_TOKEN` / `PC20_WRAPPER_SEPOLIA` are
+set — the matching specs skip when they are not, so demanding a balance for an
+unconfigured token would fail the pre-flight for tests that were never going to run.
 
 Exit code is **0** when every row is `✓`, **1** when one or more are short — so it's
 safe to gate CI or a pre-test hook on it. Missing rows are re-listed below the table
@@ -109,17 +139,36 @@ with the top-up amount and asset so it's obvious what to fund.
 
 ## Running
 
+Run through `jest.e2e.config.ts`, not the default Nx target — only the e2e config
+carries the 5-minute timeout, the global setup, and the file reporter. Logs land in
+`packages/core/e2e-logs/`.
+
 ```
-# all docs-examples specs
-pnpm --filter @pushchain/core test __e2e__/docs-examples
+# all docs-examples specs (from the repo root)
+npx jest -c packages/core/jest.e2e.config.ts --rootDir packages/core __e2e__/docs-examples --runInBand
 
 # one file
-pnpm --filter @pushchain/core test __e2e__/docs-examples/07-transaction-scenarios/route2.spec.ts
+npx jest -c packages/core/jest.e2e.config.ts --rootDir packages/core \
+  __e2e__/docs-examples/07-transaction-scenarios/route2.spec.ts --runInBand
 
 # one slug — use Jest's -t flag to match the it() title
-pnpm --filter @pushchain/core test __e2e__/docs-examples/07-transaction-scenarios/route2.spec.ts -t 'route2_funds'
+npx jest -c packages/core/jest.e2e.config.ts --rootDir packages/core \
+  __e2e__/docs-examples/07-transaction-scenarios/route2.spec.ts -t 'route2_funds' --runInBand
 
-# new Solana-origin/target slugs (requires EVM_PRIVATE_KEY + PUSH_PRIVATE_KEY or SOLANA_PRIVATE_KEY)
-pnpm --filter @pushchain/core test __e2e__/docs-examples/07-transaction-scenarios/route2.spec.ts -t 'route2_solana'
-pnpm --filter @pushchain/core test __e2e__/docs-examples/07-transaction-scenarios/route3.spec.ts -t 'route3_solana'
+# Solana-origin/target slugs (requires EVM_PRIVATE_KEY + PUSH_PRIVATE_KEY or SOLANA_PRIVATE_KEY)
+npx jest -c packages/core/jest.e2e.config.ts --rootDir packages/core \
+  __e2e__/docs-examples/07-transaction-scenarios/route2.spec.ts -t 'route2_solana' --runInBand
+
+# PC20 — the read-only registry example needs no signer and no funds
+npx jest -c packages/core/jest.e2e.config.ts --rootDir packages/core \
+  __e2e__/docs-examples/12-utility-functions --runInBand
+
+# PC20 funds-moving examples
+npx jest -c packages/core/jest.e2e.config.ts --rootDir packages/core \
+  __e2e__/docs-examples/07-transaction-scenarios -t 'pc20' --runInBand
 ```
+
+**`--runInBand` is not optional for the funds-moving suites.** They broadcast real
+transactions from a single key, so jest's default parallel workers race for the same
+nonce. The observed symptom is a worker force-exited and its suite reported failed
+with zero failed tests, while the same suite passes when run alone.

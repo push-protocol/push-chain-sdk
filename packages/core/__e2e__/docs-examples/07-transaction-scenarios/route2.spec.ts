@@ -19,6 +19,7 @@ import {
   makeSepoliaContext,
   makePushContext,
 } from '../_helpers/docs-fund';
+import { getPC20ReadFixtures, skipNote } from '@e2e/shared/pc20-fixtures';
 
 // pETH PRC-20 on Push Chain Testnet (per docs/08-Send-Multichain-Transactions.mdx:375)
 const pETH_ADDRESS = '0x2971824Db68229D087931155C2b8bB820B275809' as `0x${string}`;
@@ -52,6 +53,17 @@ const testCounterIdl = {
 const evmKey = process.env['EVM_PRIVATE_KEY'] as Hex | undefined;
 const pushKey = process.env['PUSH_PRIVATE_KEY'] as Hex | undefined;
 const ROUTE2_LIVE_TIMEOUT_MS = 900_000;
+
+// The PC20 export needs a live Push-native PC20 on top of the usual keys.
+// No wrapper is required — a first export deploys one.
+const pc20Fixtures = getPC20ReadFixtures();
+const pc20Ready = Boolean(evmKey && pushKey && pc20Fixtures);
+if (!pc20Ready) {
+  skipNote(
+    'docs-examples route2_pc20_export',
+    'needs EVM_PRIVATE_KEY + PUSH_PRIVATE_KEY + PC20_PUSH_TOKEN'
+  );
+}
 
 describe('docs-examples › 07-transaction-scenarios › Route 2 (UOA_TO_CEA)', () => {
   /**
@@ -338,5 +350,74 @@ describe('docs-examples › 07-transaction-scenarios › Route 2 (UOA_TO_CEA)', 
     expect(tx.hash).toMatch(/^0x[0-9a-fA-F]{64}$/);
     expect(receipt.status).toBe(1);
     expect(receipt.externalChain).toBe(CHAIN.BNB_TESTNET);
+  }, ROUTE2_LIVE_TIMEOUT_MS);
+
+  /**
+   * slug: send_transaction_route2_pc20_export
+   * MDX: "Export a PC20 Token to an External Chain".
+   *
+   * Locks the canonical Push-native PC20 into VaultPC20 and mints/delivers its
+   * wrapper on Sepolia. Needs PC20_PUSH_TOKEN on top of the usual keys.
+   *
+   * `receipt.externalAssetAddr` is the destination wrapper — the docs example
+   * prints it, so it is asserted here.
+   */
+  (pc20Ready ? it : it.skip)('route2_pc20_export — exports a Push PC20, mints the wrapper on Sepolia', async () => {
+    const sepoliaCtx = makeSepoliaContext(evmKey as Hex);
+    const pushCtx = makePushContext(pushKey as Hex);
+    const account = privateKeyToAccount(generatePrivateKey());
+    const walletClient = createWalletClient({
+      account,
+      chain: sepolia,
+      transport: http(CHAIN_INFO[CHAIN.ETHEREUM_SEPOLIA].defaultRPC[0]),
+    });
+
+    const universalSigner = await PushChain.utils.signer.toUniversalFromKeypair(walletClient, {
+      chain: CHAIN.ETHEREUM_SEPOLIA,
+      library: PushChain.CONSTANTS.LIBRARY.ETHEREUM_VIEM,
+    });
+    const client = await PushChain.initialize(universalSigner, {
+      network: PUSH_NETWORK.TESTNET_DONUT,
+      progressHook: (p) => console.log('TX Progress:', p.title || p.id),
+    });
+
+    // Mirrors the docs: resolve first, then export using the metadata.
+    const token = await PushChain.utils.tokens.getPC20Address(
+      pc20Fixtures!.pushToken,
+      { chain: CHAIN.PUSH_TESTNET_DONUT, network: PUSH_NETWORK.TESTNET_DONUT }
+    );
+    expect(token.address.toLowerCase()).toBe(pc20Fixtures!.pushToken.toLowerCase());
+    // Confirmed deployments only, canonical Push entry last.
+    expect(token.registry[token.registry.length - 1].chain).toBe(CHAIN.PUSH_TESTNET_DONUT);
+
+    // 0.01, not 0.005 — the export's fee-lock needs ~0.0054 ETH on the UOA.
+    // The docs prompt asks for the same amount; they must not drift.
+    await fundSepoliaUoa(sepoliaCtx, account.address, '0.01');
+    await fundUeaPC(pushCtx, client.universal.account as `0x${string}`, '1');
+    await fundUeaPRC20(
+      pushCtx,
+      client.universal.account as `0x${string}`,
+      token.address,
+      '1',
+      token.decimals,
+      token.symbol
+    );
+
+    const TARGET = '0x1234567890123456789012345678901234567890';
+    const tx = await client.universal.sendTransaction({
+      to: { address: TARGET, chain: PushChain.CONSTANTS.CHAIN.ETHEREUM_SEPOLIA },
+      funds: {
+        amount: PushChain.utils.helpers.parseUnits('1', { decimals: token.decimals }),
+        // `chain` is where the token IS — Push Chain, since this is an export.
+        token: { chain: CHAIN.PUSH_TESTNET_DONUT, address: pc20Fixtures!.pushToken },
+      },
+    });
+    const receipt = await tx.wait();
+    expect(tx.hash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    expect(receipt.status).toBe(1);
+    expect(receipt.externalChain).toBe(CHAIN.ETHEREUM_SEPOLIA);
+    expect(receipt.externalTxHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    // The destination wrapper the docs example prints.
+    expect(receipt.externalAssetAddr).toMatch(/^0x[0-9a-fA-F]{40}$/);
   }, ROUTE2_LIVE_TIMEOUT_MS);
 });
