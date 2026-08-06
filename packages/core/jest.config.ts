@@ -8,10 +8,13 @@ export default {
   moduleFileExtensions: ['ts', 'js', 'html'],
   coverageDirectory: '../../coverage/packages/core',
   testTimeout: 30000,
+  // Unit tests only. The __e2e__ specs broadcast real testnet transactions and are
+  // run exclusively through jest.e2e.config.ts (300s timeout, global setup, file
+  // reporter) via `yarn e2e:ci`. Matching them here made the nx-inferred `test`
+  // target try to run them at a 30s timeout.
   testMatch: [
     '<rootDir>/src/**/*.spec.ts',
     '<rootDir>/src/**/*.test.ts',
-    '<rootDir>/__e2e__/**/*.spec.ts',
   ],
   moduleNameMapper: {
     '^@e2e/shared/(.*)$': '<rootDir>/__e2e__/shared/$1',

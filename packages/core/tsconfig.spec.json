@@ -15,6 +15,7 @@
     "src/**/*.spec.ts",
     "src/**/*.d.ts",
     "__e2e__/**/*.spec.ts",
-    "__e2e__/shared/**/*.ts"
+    "__e2e__/shared/**/*.ts",
+    "__e2e__/ci/**/*.ts"
   ]
 }

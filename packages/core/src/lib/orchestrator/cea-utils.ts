@@ -4,7 +4,7 @@
  * Functions for computing CEA addresses and interacting with CEAFactory contracts
  */
 
-import { createPublicClient, http, type Chain } from 'viem';
+import { createPublicClient, fallback, http, type Chain } from 'viem';
 import {
   sepolia,
   arbitrumSepolia,
@@ -34,6 +34,22 @@ function getViemChain(chain: CHAIN): Chain {
     throw new Error(`No viem chain mapping for ${chain}`);
   }
   return viemChain;
+}
+
+/**
+ * Transport for a CEAFactory read.
+ *
+ * `http(undefined)` falls back to the *viem* chain's default endpoint, which for
+ * `sepolia` is `https://sepolia.drpc.org` — a paid-plan host that answers every
+ * request with HTTP 400 ("chain is not available on free plan"). That silently
+ * broke every CEA derivation that did not pass an explicit rpcUrl, and no caller
+ * passes one. Use the SDK's own `CHAIN_INFO[].defaultRPC` list instead, wrapped in
+ * `fallback` so one dead endpoint rotates to the next.
+ */
+function ceaTransport(chain: CHAIN, rpcUrl?: string) {
+  if (rpcUrl) return http(rpcUrl);
+  const rpcs = CHAIN_INFO[chain]?.defaultRPC ?? [];
+  return rpcs.length > 0 ? fallback(rpcs.map((url) => http(url))) : http();
 }
 
 // ============================================================================
@@ -79,7 +95,7 @@ export async function getCEAAddress(
   const viemChain = getViemChain(chain);
   const client = createPublicClient({
     chain: viemChain,
-    transport: http(rpcUrl),
+    transport: ceaTransport(chain, rpcUrl),
   });
 
   if (cachedAddress) {
@@ -121,7 +137,7 @@ export async function getPushAccountForCEA(
   const viemChain = getViemChain(chain);
   const client = createPublicClient({
     chain: viemChain,
-    transport: http(rpcUrl),
+    transport: ceaTransport(chain, rpcUrl),
   });
 
   const uea = await client.readContract({
@@ -156,7 +172,7 @@ export async function isCEA(
   const viemChain = getViemChain(chain);
   const client = createPublicClient({
     chain: viemChain,
-    transport: http(rpcUrl),
+    transport: ceaTransport(chain, rpcUrl),
   });
 
   return client.readContract({

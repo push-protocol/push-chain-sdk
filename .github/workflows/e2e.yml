@@ -1,0 +1,97 @@
+name: E2E (testnet)
+
+# Manual only. These tests broadcast real transactions on Ethereum Sepolia, Solana
+# Devnet and Push Donut from shared funded keys, so they are never triggered by a
+# push or a pull request — a fork PR cannot read the secrets anyway, and concurrent
+# runs would race each other for the nonce.
+on:
+  workflow_dispatch:
+    inputs:
+      group:
+        description: 'Scenario group to run'
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - smoke
+          - evm-r1
+          - evm-r2
+          - evm-r3
+          - svm-r1
+          - svm-r2r3
+          - pc20
+          - push
+          - cross-chain
+          - known-fail
+      dry_run:
+        description: 'Pre-flight only — report balances, fund nothing, run no tests'
+        required: true
+        type: boolean
+        default: false
+
+# One funded key per chain means one run at a time. Queue rather than cancel: a
+# cancelled run can leave a half-funded UEA behind.
+concurrency:
+  group: e2e-testnet
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    # group=all is ~60-100 min serial; the margin covers RPC retries.
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: packages/core
+    env:
+      EVM_PRIVATE_KEY: ${{ secrets.EVM_PRIVATE_KEY }}
+      PUSH_PRIVATE_KEY: ${{ secrets.PUSH_PRIVATE_KEY }}
+      SOLANA_PRIVATE_KEY: ${{ secrets.SOLANA_PRIVATE_KEY }}
+      PC20_PUSH_TOKEN: ${{ secrets.PC20_PUSH_TOKEN }}
+      PC20_WRAPPER_SEPOLIA: ${{ secrets.PC20_WRAPPER_SEPOLIA }}
+      SOLANA_RPC_URL: ${{ vars.SOLANA_RPC_URL }}
+      EVM_RPC: ${{ vars.EVM_RPC }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.18.0'
+          package-manager-cache: false
+
+      - name: Install dependencies
+        working-directory: .
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      # Cheap and offline: proves every `grep` in the manifest still matches a real
+      # test before we spend anything. Catches a renamed describe/it immediately.
+      - name: Verify scenario manifest
+        run: yarn e2e:verify --group "${{ inputs.group }}"
+
+      # The gate. Exits non-zero when a master wallet cannot cover the selected
+      # group, before a single transaction is broadcast.
+      - name: Pre-flight fund check
+        run: |
+          yarn e2e:preflight --group "${{ inputs.group }}" \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Run E2E suite
+        if: ${{ !inputs.dry_run }}
+        run: yarn e2e:ci --group "${{ inputs.group }}"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-${{ inputs.group }}-${{ github.run_id }}
+          path: packages/core/e2e-logs/
+          if-no-files-found: ignore
+          retention-days: 14

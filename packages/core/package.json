@@ -50,7 +50,11 @@
     }
   },
   "scripts": {
-    "build:proto": "scripts/protoc-generate.sh"
+    "build:proto": "scripts/protoc-generate.sh",
+    "e2e:list": "ts-node --transpile-only __e2e__/ci/run.ts --list",
+    "e2e:verify": "ts-node --transpile-only __e2e__/ci/run.ts --verify",
+    "e2e:preflight": "ts-node --transpile-only __e2e__/ci/preflight.ts",
+    "e2e:ci": "ts-node --transpile-only __e2e__/ci/run.ts"
   },
   "type": "commonjs",
   "main": "./src/index.js",
@@ -67,7 +71,9 @@
   ],
   "devDependencies": {
     "@types/bs58": "^4.0.0",
+    "dotenv": "^16.4.5",
     "secp256k1": "^5.0.1",
+    "ts-node": "10.9.1",
     "ts-proto": "^2.0.3"
   }
 }
