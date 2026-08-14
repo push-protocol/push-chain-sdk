@@ -1,3 +1,11 @@
+@pushchain/core@6.0.22 (2026-08-14)
+
+- fix: make PC20 first exports and Solana R3 E2E reliable
+- fix: support PC20 exports for standard ERC-20 tokens
+- feat: curated E2E CI suite with pre-flight fund gate
+
+---
+
 @pushchain/core@6.0.21 (2026-08-01)
 
 - fix: pc20 bug fix
