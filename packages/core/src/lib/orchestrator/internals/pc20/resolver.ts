@@ -51,7 +51,7 @@ import {
 import {
   UNIVERSAL_CORE_EVM,
   UNIVERSAL_GATEWAY_PC,
-  IPC20_EVM,
+  ERC20_EVM,
   PC20_FACTORY_EVM,
   PC20_WRAPPER_EVM,
   EXTERNAL_GATEWAY_PC20_EVM,
@@ -83,12 +83,11 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-/** Metadata read off a Push-native PC20 via `pc20Metadata()`. */
+/** Standard ERC-20 metadata forwarded when exporting a Push-native PC20. */
 export type PC20Metadata = {
   name: string;
   symbol: string;
   decimals: number;
-  originAddress: `0x${string}`;
 };
 
 /** A confirmed wrapper deployment on one external chain. */
@@ -193,10 +192,9 @@ function clientFor(chain: CHAIN, opts: PC20ResolverOptions): PublicClient {
  * dispatches them synchronously, which is what puts them in the same batch
  * window — awaiting them one at a time would silently become N round trips.
  *
- * Failures are captured per call rather than thrown, because several PC20 probes
- * are *expected* to revert: `pc20Metadata()` reverting on a plain ERC20 is the
- * primary discriminator, not an error condition. Callers interpret each result
- * individually via {@link unwrap}.
+ * Failures are captured per call rather than thrown, because optional identity
+ * probes such as `CHAIN_NAMESPACE()` are expected to revert on ordinary ERC-20s.
+ * Callers interpret each result individually via {@link unwrap}.
  */
 async function batchRead(
   client: PublicClient,
@@ -513,12 +511,11 @@ export async function verifyEvmWrapperIdentity(
 // ---------------------------------------------------------------------------
 
 /**
- * Read and validate `pc20Metadata()` on a Push-native token.
+ * Read and validate standard ERC-20 metadata on a Push-native token.
  *
- * The absence of `pc20Metadata` is the discriminator between a PC20 and any
- * other ERC20 — never the symbol. A synthetic PRC20 is detected separately so
- * it gets an error that points at the right API rather than reading as
- * "your token is broken".
+ * Every metadata-compatible ERC-20 born on Push Chain is eligible for PC20
+ * export. Synthetic PRC20s expose `CHAIN_NAMESPACE()` and are rejected even
+ * though they also implement the standard metadata functions.
  */
 export async function readPushPC20Metadata(
   pushAddress: `0x${string}`,
@@ -530,10 +527,26 @@ export async function readPushPC20Metadata(
   if (cached) return cached;
 
   const client = clientFor(pushChain, opts);
-  const [metaEntry, codeEntry] = await Promise.all([
+  const [metadataEntries, codeEntry] = await Promise.all([
     batchRead(client, [
-      { address: pushAddress, abi: IPC20_EVM, functionName: 'pc20Metadata', args: [] },
-    ]).then((r) => r[0]),
+      { address: pushAddress, abi: ERC20_EVM, functionName: 'name', args: [] },
+      { address: pushAddress, abi: ERC20_EVM, functionName: 'symbol', args: [] },
+      { address: pushAddress, abi: ERC20_EVM, functionName: 'decimals', args: [] },
+      {
+        address: pushAddress,
+        abi: [
+          {
+            type: 'function',
+            name: 'CHAIN_NAMESPACE',
+            inputs: [],
+            outputs: [{ name: '', type: 'string' }],
+            stateMutability: 'view',
+          },
+        ] as const,
+        functionName: 'CHAIN_NAMESPACE',
+        args: [],
+      },
+    ]),
     (async () => {
       __readCount.n += 1;
       return { status: 'success' as const, result: await client.getCode({ address: pushAddress }) };
@@ -548,33 +561,34 @@ export async function readPushPC20Metadata(
     });
   }
 
-  const meta = unwrap<[string, string, number, `0x${string}`]>(metaEntry);
-  if (!meta) {
-    if (await isSyntheticPRC20(pushAddress, opts)) {
-      throw new PC20ExpectedButPRC20Error({
-        chain: String(pushChain),
-        address: pushAddress,
-      });
-    }
+  const prc20Namespace = unwrap<string>(metadataEntries[3]);
+  if (typeof prc20Namespace === 'string') {
+    throw new PC20ExpectedButPRC20Error({
+      chain: String(pushChain),
+      address: pushAddress,
+      chainNamespace: prc20Namespace,
+    });
+  }
+
+  const name = unwrap<string>(metadataEntries[0]);
+  const symbol = unwrap<string>(metadataEntries[1]);
+  const decimals = unwrap<number>(metadataEntries[2]);
+  if (name === undefined || symbol === undefined || decimals === undefined) {
     throw new InvalidPC20MetadataError(
-      'Token does not implement pc20Metadata() and is not a Push-native PC20.',
+      'Token must implement the ERC-20 metadata functions name(), symbol(), and decimals().',
       { chain: String(pushChain), address: pushAddress }
     );
   }
 
-  const [name, symbol, decimals, originAddress] = meta;
-
-  // The origin binding is what makes the metadata trustworthy: a contract can
-  // return any name it likes, but claiming to originate at a different address
-  // means it is not the canonical source for this token.
-  if (getAddress(originAddress) !== getAddress(pushAddress)) {
-    throw new InvalidPC20MetadataError(
-      `pc20Metadata().originAddress (${originAddress}) does not match the token address.`,
-      { chain: String(pushChain), address: pushAddress }
-    );
-  }
   if (!name || !symbol) {
     throw new InvalidPC20MetadataError('PC20 name and symbol must be non-empty.', {
+      chain: String(pushChain),
+      address: pushAddress,
+    });
+  }
+  const normalizedDecimals = Number(decimals);
+  if (!Number.isInteger(normalizedDecimals) || normalizedDecimals < 0 || normalizedDecimals > 255) {
+    throw new InvalidPC20MetadataError('PC20 decimals must be a valid uint8 value.', {
       chain: String(pushChain),
       address: pushAddress,
     });
@@ -583,41 +597,10 @@ export async function readPushPC20Metadata(
   const validated: PC20Metadata = {
     name,
     symbol,
-    decimals: Number(decimals),
-    originAddress: getAddress(originAddress) as `0x${string}`,
+    decimals: normalizedDecimals,
   };
   metadataCache.set(key, validated);
   return validated;
-}
-
-/**
- * Distinguish a synthetic PRC20 from an arbitrary ERC20.
- *
- * PRC20s expose the origin chain they wrap; PC20s do not. Checked only after
- * `pc20Metadata()` has already failed, so it costs nothing on the happy path.
- */
-async function isSyntheticPRC20(
-  address: `0x${string}`,
-  opts: PC20ResolverOptions
-): Promise<boolean> {
-  const client = clientFor(getPushChainForNetwork(opts.network), opts);
-  const [entry] = await batchRead(client, [
-    {
-      address,
-      abi: [
-        {
-          type: 'function',
-          name: 'CHAIN_NAMESPACE',
-          inputs: [],
-          outputs: [{ name: '', type: 'string' }],
-          stateMutability: 'view',
-        },
-      ] as const,
-      functionName: 'CHAIN_NAMESPACE',
-      args: [],
-    },
-  ]);
-  return typeof unwrap<string>(entry) === 'string';
 }
 
 // ---------------------------------------------------------------------------

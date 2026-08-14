@@ -11,8 +11,15 @@
 @pushchain/core@6.1.0 (unreleased)
 
 - Added first-class PC20 support to the universal transaction API. PC20 tokens
-  are resolved from their chain and address through UniversalCore, without an
-  explicit token-standard flag.
+  are identified by chain and address without an explicit token-standard flag.
+  External wrappers are resolved through UniversalCore, while Push-native
+  tokens are validated directly on Push Chain.
+
+- Removed the custom `pc20Metadata()` requirement for Push-native PC20 exports.
+  Any metadata-compatible ERC-20 born on Push Chain can now be exported: the SDK
+  reads the standard `name()`, `symbol()`, and `decimals()` functions, verifies
+  deployed bytecode, and continues to reject synthetic PRC20 addresses from the
+  PC20 path.
 
 - Added `PushChain.utils.tokens.getPC20Address()` for resolving either a
   Push-native PC20 or an external wrapper and listing its confirmed deployments.

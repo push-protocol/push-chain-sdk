@@ -2,7 +2,6 @@
  * PC20 ABIs — minimal read surfaces for registry resolution and validation.
  *
  * Sources:
- *   IPC20            push-chain-gateway-contracts/contracts/evm-gateway/src/interfaces/IPC20.sol
  *   PC20Factory      push-chain-gateway-contracts/contracts/evm-gateway/src/PC20Factory.sol
  *   PC20Wrapper      push-chain-gateway-contracts/contracts/evm-gateway/src/PC20Wrapper.sol
  *   UniversalGateway push-chain-gateway-contracts/contracts/evm-gateway/src/UniversalGateway.sol
@@ -10,22 +9,6 @@
  * Read-only entries only. Writes go through the existing gateway ABIs — PC20
  * changes the payload, not the entrypoint.
  */
-
-/** Push-native token eligible for export. Presence of `pc20Metadata` IS the PC20 test. */
-export const IPC20_EVM = [
-  {
-    type: 'function',
-    name: 'pc20Metadata',
-    inputs: [],
-    outputs: [
-      { name: 'name', type: 'string', internalType: 'string' },
-      { name: 'symbol', type: 'string', internalType: 'string' },
-      { name: 'decimals', type: 'uint8', internalType: 'uint8' },
-      { name: 'originAddress', type: 'address', internalType: 'address' },
-    ],
-    stateMutability: 'view',
-  },
-] as const;
 
 /**
  * Destination-chain factory.

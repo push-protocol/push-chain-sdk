@@ -135,7 +135,7 @@ export class PC20FactoryMismatchError extends PC20Error {
   }
 }
 
-/** Token does not implement `pc20Metadata()`, or the metadata fails validation. */
+/** Token does not expose usable ERC-20 metadata, or the metadata fails validation. */
 export class InvalidPC20MetadataError extends PC20Error {
   constructor(message: string, ctx: PC20ErrorContext = {}) {
     super('PC20_INVALID_METADATA', message, ctx);

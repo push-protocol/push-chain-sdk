@@ -254,7 +254,7 @@ Rules:
 - The result comes from UniversalCore, not symbol matching or
   `MOVEABLE_TOKENS`.
 - Passing a Push Chain PC20 address may return the same address after validating
-  `pc20Metadata()`.
+  its standard ERC-20 metadata and excluding synthetic PRC20s.
 
 ### 3.3 List confirmed wrapper deployments
 
@@ -358,7 +358,7 @@ Extend `UNIVERSAL_CORE_EVM` with:
 
 Add minimal ABIs for:
 
-- `IPC20.pc20Metadata`
+- ERC-20 `name`, `symbol`, and `decimals`
 - `PC20Factory.getWrapper`
 - `PC20Factory.wrapperToSource`
 - `PC20Factory.isPC20Wrapper`
@@ -525,9 +525,10 @@ For SVM:
 For a Push-native token:
 
 1. Require deployed bytecode.
-2. Call `pc20Metadata()`.
-3. Require `originAddress == token.address`.
-4. Require nonempty name and symbol.
+2. Call the standard ERC-20 `name()`, `symbol()`, and `decimals()` functions.
+3. Probe `CHAIN_NAMESPACE()` in the same batch and reject the token as a
+   synthetic PRC20 when that probe succeeds.
+4. Require nonempty name and symbol and a valid `uint8` decimals value.
 5. Enforce the destination factory's UTF-8 byte limits for name and symbol.
    These limits must be read from (or asserted at build time against) the
    factory contract's own constants — currently 64 bytes for name and 32 for
@@ -535,11 +536,10 @@ For a Push-native token:
    would silently desynchronize them; a unit test pins the SDK values to the
    reference contract revision.
 6. Require a nonzero destination `pc20FactoryByChain`.
-7. Reject an ordinary ERC20 that does not implement valid PC20 metadata with
+7. Reject a token that does not expose usable standard ERC-20 metadata with
    `InvalidPC20MetadataError`.
-8. Detect a synthetic PRC20 specifically (see §3.1) and reject it with
-   `PC20ExpectedButPRC20Error` pointing at the `MoveableToken` API. This is a
-   distinct case from step 7 and must not share its message.
+8. Keep the synthetic PRC20 error distinct from step 7 and point it at the
+   `MoveableToken` API.
 
 ## 6. External-to-Push flow
 
@@ -809,7 +809,7 @@ Expected areas:
 | Area | Planned work |
 | --- | --- |
 | `orchestrator.types.ts` | `PC20TokenReference`, `FundsToken`, public utility results, internal resolved token |
-| `constants/abi` | UniversalCore PC20 functions, IPC20, PC20 factory/wrapper, gateway getter |
+| `constants/abi` | UniversalCore PC20 functions, ERC-20 metadata, PC20 factory/wrapper, gateway getter |
 | new `internals/pc20-resolver.ts` | Registry reads, metadata, address codecs, factory/PDA validation |
 | `utils.ts` | `getPC20Address`, `getPC20Deployments` |
 | `orchestrator.ts` | Resolve before Route 1 execution; expose internal query entry points |
@@ -941,9 +941,9 @@ Address and registry:
 
 Metadata:
 
-- Valid `pc20Metadata()` succeeds.
-- Missing `pc20Metadata()` fails.
-- `originAddress` mismatch fails.
+- A plain ERC-20 with valid `name()`, `symbol()`, and `decimals()` succeeds.
+- A failure from any required ERC-20 metadata function fails.
+- A metadata-compatible synthetic PRC20 still fails with the PRC20-specific error.
 - Empty/oversized name or symbol fails.
 
 Inbound EVM:

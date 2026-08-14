@@ -61,6 +61,7 @@ function makeUniversalTxResponse(overrides: Record<string, any> = {}): Universal
     progressHook: jest.fn(),
     type: '99',
     typeVerbose: 'universal',
+    atomic: true,
     signature: { r: '0x', s: '0x', v: 27 } as any,
     ...overrides,
   } as UniversalTxResponse;

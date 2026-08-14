@@ -41,6 +41,11 @@ Lookup is lenient (auto-discovery); spending is not — `funds.token` requires
 `chain`, and a send whose chain disagrees with where the funds actually are is
 rejected before any approval.
 
+Push-native PC20 exports no longer require a custom `pc20Metadata()` function.
+Any metadata-compatible ERC-20 born on Push Chain can be exported; the SDK reads
+its standard `name()`, `symbol()`, and `decimals()` functions and continues to
+reject synthetic PRC20 addresses from the PC20 path.
+
 **Route coverage**
 
 - R1 (external → Push wrapper burn): EVM and Solana. The Solana burn needs no

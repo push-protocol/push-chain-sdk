@@ -17,7 +17,6 @@ export { UEA_FACTORY_ABI } from './uea-factory';
 
 // PC20
 export {
-  IPC20_EVM,
   PC20_FACTORY_EVM,
   PC20_WRAPPER_EVM,
   EXTERNAL_GATEWAY_PC20_EVM,

@@ -23,8 +23,9 @@ type Script = {
   wrappersByNamespace?: Record<string, [string, boolean]>;
   /** getPC20Source per namespace, for chain discovery */
   sourceByNamespace?: Record<string, [string, boolean]>;
-  /** pc20Metadata() → [name, symbol, decimals, originAddress] */
-  metadata?: [string, string, number, string] | 'revert';
+  /** Standard ERC-20 metadata reads: name(), symbol(), decimals(). */
+  metadata?: [string, string, number] | 'revert';
+  metadataFailure?: 'name' | 'symbol' | 'decimals';
   /** CHAIN_NAMESPACE() on the token, present only on synthetic PRC20s */
   prc20Namespace?: string;
   code?: string;
@@ -69,9 +70,16 @@ jest.mock('viem', () => {
           ? [script.wrapper[0] === ZERO ? ZERO32 : pad(script.wrapper[0]), script.wrapper[1]]
           : [ZERO32, false];
       }
-      case 'pc20Metadata':
-        if (script.metadata && script.metadata !== 'revert') return script.metadata;
-        throw new Error('reverted');
+      case 'name':
+      case 'symbol':
+      case 'decimals': {
+        if (script.metadata === 'revert' || script.metadataFailure === c.functionName) {
+          throw new Error('reverted');
+        }
+        if (!script.metadata) throw new Error('metadata not scripted');
+        const index = c.functionName === 'name' ? 0 : c.functionName === 'symbol' ? 1 : 2;
+        return script.metadata[index];
+      }
       case 'CHAIN_NAMESPACE':
         if (script.prc20Namespace) return script.prc20Namespace;
         throw new Error('reverted');
@@ -122,12 +130,7 @@ import { chainToNamespace } from '../chain-namespace';
 const OPTS = { network: PUSH_NETWORK.TESTNET_DONUT };
 const CHAIN_UNDER_TEST = CHAIN.ETHEREUM_SEPOLIA;
 
-const validMetadata = (): [string, string, number, string] => [
-  'Push Token',
-  'PUSH',
-  18,
-  PUSH_PC20,
-];
+const validMetadata = (): [string, string, number] => ['Push Token', 'PUSH', 18];
 
 beforeEach(() => {
   script = {};
@@ -242,26 +245,37 @@ describe('resolveWrapperToSource', () => {
 });
 
 describe('readPushPC20Metadata', () => {
-  it('accepts valid metadata', async () => {
+  it('accepts a plain ERC-20 with standard metadata and no custom PC20 method', async () => {
     script.metadata = validMetadata();
     const meta = await readPushPC20Metadata(PUSH_PC20, OPTS);
     expect(meta).toEqual({
       name: 'Push Token',
       symbol: 'PUSH',
       decimals: 18,
-      originAddress: expect.any(String),
     });
   });
 
-  it('rejects a token with no pc20Metadata()', async () => {
+  it.each(['name', 'symbol', 'decimals'] as const)(
+    'rejects a token whose %s() metadata read fails',
+    async (metadataFailure) => {
+      script.metadata = validMetadata();
+      script.metadataFailure = metadataFailure;
+
+      await expect(readPushPC20Metadata(PUSH_PC20, OPTS)).rejects.toThrow(
+        InvalidPC20MetadataError
+      );
+    }
+  );
+
+  it('rejects a token with no ERC-20 metadata surface', async () => {
     script.metadata = 'revert';
     await expect(readPushPC20Metadata(PUSH_PC20, OPTS)).rejects.toThrow(
       InvalidPC20MetadataError
     );
   });
 
-  it('rejects a synthetic PRC20 with a distinct, actionable error', async () => {
-    script.metadata = 'revert';
+  it('rejects a metadata-compatible synthetic PRC20 with a distinct error', async () => {
+    script.metadata = validMetadata();
     script.prc20Namespace = 'eip155:11155111';
 
     await expect(readPushPC20Metadata(PUSH_PC20, OPTS)).rejects.toThrow(
@@ -272,17 +286,17 @@ describe('readPushPC20Metadata', () => {
     );
   });
 
-  it('rejects an originAddress that does not match the token address', async () => {
-    script.metadata = ['Push Token', 'PUSH', 18, WRAPPER];
+  it('rejects empty name or symbol', async () => {
+    script.metadata = ['', 'PUSH', 18];
     await expect(readPushPC20Metadata(PUSH_PC20, OPTS)).rejects.toThrow(
-      /originAddress/
+      /non-empty/
     );
   });
 
-  it('rejects empty name or symbol', async () => {
-    script.metadata = ['', 'PUSH', 18, PUSH_PC20];
+  it('rejects decimals outside the uint8 range', async () => {
+    script.metadata = ['Push Token', 'PUSH', 256];
     await expect(readPushPC20Metadata(PUSH_PC20, OPTS)).rejects.toThrow(
-      /non-empty/
+      /valid uint8/
     );
   });
 

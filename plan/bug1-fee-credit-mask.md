@@ -1,5 +1,73 @@
 # Bug 1 — PC20 return (wrapper burn → unlock): fee credit fails, masked as a gas error
 
+## Reproduction bookmark — verified 2026-08-12
+
+Keep the normal checkout on the latest `main`; reproduce from an isolated detached
+worktree at the last known pre-fix SDK commit:
+
+- **Pre-fix commit:** `1daf4c76f68736d51f6eba164a9c5e6cfdcf3204`
+  (`1daf4c7 fix(core): pc20 e2es and bug fixes`)
+- **SDK fix commit:** `6fb6cc2b8f85b210c34a74b1aa8b213883312449`
+  (`6fb6cc2 fix(core): pc20 bug fix`)
+- **Focused E2E:** `packages/core/__e2e__/evm/pc20/pc20-inbound.spec.ts`
+- **Focused test:** `PC20 inbound — EVM wrapper burn burns the wrapper and unlocks the Push-native token`
+
+Safe replay procedure:
+
+```bash
+repro_dir=$(mktemp -d /tmp/push-bug1-repro.XXXXXX)
+git worktree add --detach "$repro_dir" 1daf4c76f68736d51f6eba164a9c5e6cfdcf3204
+ln -s "$PWD/packages/core/.env" "$repro_dir/packages/core/.env"
+cd "$repro_dir"
+yarn install --immutable
+node ./node_modules/jest/bin/jest.js \
+  packages/core/__e2e__/evm/pc20/pc20-inbound.spec.ts \
+  -t '^PC20 inbound — EVM wrapper burn burns the wrapper and unlocks the Push-native token$' \
+  --runInBand
+```
+
+RPC compatibility note: if the old commit attempts an unconfigured viem/dRPC
+transport, temporarily change each `http(rpcUrl)` in
+`packages/core/src/lib/orchestrator/cea-utils.ts` to
+`http(rpcUrl ?? CHAIN_INFO[chain].defaultRPC[0])` inside the disposable worktree.
+Do not commit that compatibility-only edit.
+
+Expected result:
+
+1. Sepolia gateway emits two `UniversalTx` logs.
+2. The first log is the PC20 burn/unlock leg and its Push transactions succeed.
+3. The second log is the native fee-credit `FUNDS` leg with recipient `0x0`; its
+   PC transaction fails with `depositPRC20Token ... intrinsic gas too low`.
+4. Jest still reports **PASS**, because `sendToleratingFeeCreditBug` catches this
+   exact known failure. The failed second UTX—not Jest's exit code—is the proof.
+5. The fee-credit amount is subsequently refunded to the originating EOA.
+
+Derive each UTX ID with:
+
+```text
+0x + sha256("eip155:11155111:<sepolia-gateway-tx-hash>:<decimal-log-index>")
+```
+
+Latest reproduction evidence (2026-08-12):
+
+- Sepolia gateway tx: `0x821cee3b7bf124949be64b930c1e2a934918b5a87919119b8bd3f588fa7ac13b`
+- Burn/unlock log `688`, succeeded UTX:
+  `0x6cf7cd606c8d4f2f21c333182cf17b9ce1d33770ec04f5814a9f1f183e050e0f`
+- Fee-credit log `689`, failed UTX:
+  `0xd64f155515d49e3f4d8b1a72c251d0774e3bc3485bda790a818374274426e7f5`
+- Successful Sepolia refund tx:
+  `0x58954e8e99c5db5439367507067b2302665be6c6970c2b5af7a54f090a5eb935`
+- Refund outbound/sub-tx ID:
+  `0x33de2ad557dbb0f75333e43c05bada9caefce49e6c648307a5db1b619fa97be7`
+
+Cleanup after collecting evidence:
+
+```bash
+cd /path/to/push-chain-sdk
+git worktree remove --force "$repro_dir"
+git worktree prune
+```
+
 > ## Correction — 2026-07-31 (supersedes the root-cause section below)
 >
 > **Nilesh was right and my original root cause was wrong.** The second inbound fails because its `recipient` is the **zero address**, not because of a transient revert. Proven by eth_call from the ue module address on Donut:
