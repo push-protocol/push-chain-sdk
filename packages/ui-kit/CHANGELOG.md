@@ -1,3 +1,9 @@
+@pushchain/ui-kit@6.0.23 (2026-08-14)
+
+- chore: update bundled  to pull in the latest core features (v6.0.22)
+
+---
+
 @pushchain/ui-kit@6.0.22 (2026-08-14)
 
 - feat: add swap support and transaction lifecycle tracking
