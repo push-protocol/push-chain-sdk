@@ -915,6 +915,7 @@ export const WalletContextProvider: FC<PushWalletProviderProps> = ({
         <PushWalletToast
           progress={progress}
           setProgress={setProgress}
+          initialChain={universalAccount?.chain}
           toastPosition={config?.toast?.position}
           hidden={config?.toast?.hidden}
         />

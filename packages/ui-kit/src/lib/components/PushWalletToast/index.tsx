@@ -4,6 +4,7 @@ import styled, { css } from 'styled-components';
 import { CrossIcon, Spinner, TickIcon, WarningIcon } from '../../components/common';
 import CaretDown from '../common/icons/CaretDown';
 import CaretUp from '../common/icons/CaretUp';
+import { getUniversalTxId } from './trackTransaction';
 
 const TOAST_POSITION = {
     TOP_LEFT: 'top-left',
@@ -19,10 +20,18 @@ type ToastPosition = typeof TOAST_POSITION[keyof typeof TOAST_POSITION];
 type PushWalletToastProps = {
     progress: ProgressEvent | null;
     setProgress: React.Dispatch<React.SetStateAction<ProgressEvent | null>>;
+    initialChain?: string;
     className?: string;
     toastPosition?: ToastPosition;
     hidden?: boolean;
 };
+
+const TRANSACTION_START_IDS: ReadonlyArray<string> = [
+    PROGRESS_HOOK.SEND_TX_001,
+    PROGRESS_HOOK.SEND_TX_101,
+    PROGRESS_HOOK.SEND_TX_201,
+    PROGRESS_HOOK.SEND_TX_301,
+];
 
 const SUCCESS_TERMINAL_IDS: ReadonlyArray<string> = [
     PROGRESS_HOOK.SEND_TX_199_01,
@@ -45,6 +54,7 @@ const FAILURE_TERMINAL_IDS: ReadonlyArray<string> = [
 const PushWalletToast: FC<PushWalletToastProps> = ({
     progress,
     setProgress,
+    initialChain,
     className = 'PUAToast',
     toastPosition = 'bottom-right',
     hidden = false,
@@ -56,11 +66,21 @@ const PushWalletToast: FC<PushWalletToastProps> = ({
     const [isOverflowing, setIsOverflowing] = useState(false);
 
     const textRef = useRef<HTMLSpanElement | null>(null);
+    const trackedTxRef = useRef<string | null>(null);
+    const previousProgressIdRef = useRef<string | null>(null);
 
     const handleViewOnScan = (txnHash: string) => {
         if (txnHash) {
             window.open(`https://donut.push.network/tx/${txnHash}`, '_blank');
         }
+    };
+
+    const handleViewLifecycle = (universalTxId: string) => {
+        window.open(
+            `https://donut.push.network/track?utx=${universalTxId}`,
+            '_blank',
+            'noopener,noreferrer'
+        );
     };
 
     useEffect(() => {
@@ -84,6 +104,12 @@ const PushWalletToast: FC<PushWalletToastProps> = ({
     const isSuccess = SUCCESS_TERMINAL_IDS.includes(progress.id);
     const isFailure = FAILURE_TERMINAL_IDS.includes(progress.id) || progress.level === 'ERROR';
     const txHash = (progress.response as { txHash?: string } | null)?.txHash;
+    const isNewTransaction = TRANSACTION_START_IDS.includes(progress.id)
+        && previousProgressIdRef.current !== progress.id;
+    if (isNewTransaction) trackedTxRef.current = null;
+    previousProgressIdRef.current = progress.id;
+    trackedTxRef.current ??= getUniversalTxId(progress, initialChain);
+    const trackedTx = trackedTxRef.current;
 
     return (
         <ToastContainer className={className} $position={toastPosition}>
@@ -103,6 +129,12 @@ const PushWalletToast: FC<PushWalletToastProps> = ({
                 {isSuccess && txHash && (
                     <LinkText onClick={() => handleViewOnScan(txHash)}>
                         View in Explorer
+                    </LinkText>
+                )}
+
+                {!isSuccess && !isFailure && trackedTx && (
+                    <LinkText onClick={() => handleViewLifecycle(trackedTx)}>
+                        Track Live Progress <ExternalArrow aria-hidden="true">↗</ExternalArrow>
                     </LinkText>
                 )}
 
@@ -128,6 +160,12 @@ const PushWalletToast: FC<PushWalletToastProps> = ({
                         )}
                     </DescriptionContainer>
                 )}
+
+                {isFailure && trackedTx && (
+                    <LinkText onClick={() => handleViewLifecycle(trackedTx)}>
+                        View Tx Lifecycle <ExternalArrow aria-hidden="true">↗</ExternalArrow>
+                    </LinkText>
+                )}
             </ContentContainer>
 
             <CloseContainer
@@ -143,6 +181,7 @@ const PushWalletToast: FC<PushWalletToastProps> = ({
 };
 
 export { PushWalletToast, TOAST_POSITION };
+export { getUniversalTxId } from './trackTransaction';
 export type { ToastPosition };
 
 const getToastPositionStyles = (position: ToastPosition) => {
@@ -264,6 +303,11 @@ const LinkText = styled.span`
     cursor: pointer;
     color: #0056D0;
     font-family: var(--pw-int-font-family);
+`;
+
+const ExternalArrow = styled.span`
+    display: inline-block;
+    margin-left: 4px;
 `;
 
 const IconContainer = styled.div`

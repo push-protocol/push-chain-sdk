@@ -51,7 +51,7 @@ const LoginModal: FC<LoginModalProps> = ({
   toggleButtonRefs,
   activeTriggerId,
 }) => {
-  const [version, setVersion] = React.useState<number>(7);
+  const [version, setVersion] = React.useState<number>(8);
 
   const { modal } = config;
   const { pushChainClient } = usePushChainClient(config?.uid || 'default');
