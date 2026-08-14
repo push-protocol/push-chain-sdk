@@ -485,7 +485,8 @@ export const SCENARIOS: Scenario[] = [
     group: 'pc20',
     file: F.pc20Svm,
     grep: 'R3 burns the CEA ATA balance and unlocks on Push',
-    needs: { ueaPC: '2', ceaSvmSOL: '0.005' },
+    needs: { ueaPC: '2', ueaPC20: '0.5', ceaSvmSOL: '0.005' },
+    note: 'Self-seeds the CEA ATA with an R2 export before exercising R3.',
   },
 
   // ---------------------------------------------------------------------------

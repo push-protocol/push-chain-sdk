@@ -22,6 +22,9 @@ const fixtures = getPC20Fixtures();
 const d = fixtures ? describe : describe.skip;
 
 announcePC20Skip('PC20 export');
+if (fixtures && !fixtures.undeployedToken) {
+  console.log('[SKIP] PC20 first export — PC20_UNDEPLOYED_TOKEN not set');
+}
 
 const AMOUNT = BigInt(1_000);
 
@@ -109,15 +112,11 @@ d('PC20 export — Push to EVM', () => {
     expect(second[0]?.address).toBe(first[0]?.address);
   }, 900_000);
 
-  it('predicts the wrapper address correctly on a first export', async () => {
-    if (!fixtures!.undeployedToken) {
-      console.log('[SKIP] PC20_UNDEPLOYED_TOKEN not set — cannot test first export');
-      return;
-    }
-
+  (fixtures?.undeployedToken ? it : it.skip)('predicts the wrapper address correctly on a first export', async () => {
     // Nothing is deployed yet, so the SDK has to predict the wrapper address in
     // order to build the destination transfer.
-    const before = await wrappersOn(fixtures!.undeployedToken, destChain());
+    const token = fixtures!.undeployedToken!;
+    const before = await wrappersOn(token, destChain());
     expect(before).toEqual([]);
 
     const response = await client.universal.sendTransaction({
@@ -126,13 +125,13 @@ d('PC20 export — Push to EVM', () => {
         amount: AMOUNT,
         token: {
           chain: CHAIN.PUSH_TESTNET_DONUT,
-          address: fixtures!.undeployedToken,
+          address: token,
         },
       },
     });
     await response.wait();
 
-    const deployments = await wrappersOn(fixtures!.undeployedToken, destChain());
+    const deployments = await wrappersOn(token, destChain());
 
     expect(deployments).toHaveLength(1);
 

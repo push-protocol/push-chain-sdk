@@ -23,7 +23,7 @@ import {
   http,
   type Hex,
 } from 'viem';
-import { CHAIN } from '../../../constants/enums';
+import { CHAIN, VM } from '../../../constants/enums';
 import {
   UNIVERSAL_CORE_EVM,
   PC20_FACTORY_EVM,
@@ -136,6 +136,8 @@ export type PC20GasQuote = {
   protocolFee: bigint;
   gasPrice: bigint;
   chainNamespace: string;
+  /** Value encoded in the outbound request before UGPC applies its overhead. */
+  requestGasLimit: bigint;
   gasLimitUsed: bigint;
   isFirstExport: boolean;
   /**
@@ -160,10 +162,11 @@ export type PC20GasQuote = {
  *     `pc20DeploymentGasOverhead` and the transfer strands on the destination
  *     with the source token already locked.
  *
- * The second is unrecoverable without operator intervention, so the ceiling
- * always covers a deployment. `maxPCForGas` is a ceiling rather than a charge —
- * the unspent remainder is not consumed — so the only cost is a higher required
- * balance. `gasLimitUsed` itself is passed through unchanged.
+ * The second is unrecoverable without operator intervention, so the execution
+ * gas limit always covers a deployment. The buffered limit must be re-quoted
+ * and written into the outbound request; funding a higher ceiling while leaving
+ * the request at the default limit still makes the relayer submit an
+ * under-gassed destination transaction.
  */
 export async function quotePC20Export(
   ctx: OrchestratorContext,
@@ -175,33 +178,47 @@ export async function quotePC20Export(
   const namespace = chainToNamespace(destinationChain);
   const core = await getUniversalCoreAddress(opts);
 
-  const result = await ctx.pushClient.readContract<
+  const readQuote = (limit: bigint) => ctx.pushClient.readContract<
     [`0x${string}`, bigint, bigint, bigint, string, bigint, boolean]
   >({
     address: core,
     abi: UNIVERSAL_CORE_EVM,
     functionName: 'getPC20ExportGasAndFees',
-    args: [namespace, gasLimit, pushPC20],
+    args: [namespace, limit, pushPC20],
   });
 
-  const [gasToken, gasFee, protocolFee, gasPrice, chainNamespace, gasLimitUsed, isFirstExport] =
-    result;
+  const [baseQuote, overhead] = await Promise.all([
+    readQuote(gasLimit),
+    ctx.pushClient.readContract<bigint>({
+      address: core,
+      abi: UNIVERSAL_CORE_EVM,
+      functionName: 'pc20DeploymentGasOverhead',
+      args: [namespace],
+    }),
+  ]);
+  const baseGasLimitUsed = baseQuote[5];
+  const isFirstExport = baseQuote[6];
 
-  const overhead = await ctx.pushClient.readContract<bigint>({
-    address: core,
-    abi: UNIVERSAL_CORE_EVM,
-    functionName: 'pc20DeploymentGasOverhead',
-    args: [namespace],
-  });
-
-  // Add the overhead even when the quote already included it. Double-counting
-  // raises a ceiling that is never fully spent; under-counting strands funds.
-  const gasLimitCeiling = gasLimitUsed + overhead;
+  // Feed the resolved first quote back as the explicit request limit. UGPC
+  // applies its deployment overhead to that value, giving one additional
+  // safety margin while keeping the fee quote and final destination limit in
+  // sync. Passing `gasLimitCeiling` here would make UGPC add the overhead yet
+  // again and over-provision the relayer transaction.
+  const gasLimitCeiling = baseGasLimitUsed + overhead;
+  const isEvmDestination = vmForChain(destinationChain) === VM.EVM;
+  const requestGasLimit = isEvmDestination ? baseGasLimitUsed : gasLimit;
+  // Solana has a separate rent/compute-budget requote path; preserve its base
+  // quote here so this EVM wrapper-deployment guard does not double-count it.
+  const bufferedQuote = isEvmDestination
+    ? await readQuote(requestGasLimit)
+    : baseQuote;
+  const [gasToken, gasFee, protocolFee, gasPrice, chainNamespace, gasLimitUsed] =
+    bufferedQuote;
 
   printLog(
     ctx,
-    `quotePC20Export — namespace=${chainNamespace}, gasLimitUsed=${gasLimitUsed}, ` +
-      `isFirstExport=${isFirstExport}, overhead=${overhead}, ceiling=${gasLimitCeiling}`
+    `quotePC20Export — namespace=${chainNamespace}, baseGasLimit=${baseGasLimitUsed}, ` +
+      `isFirstExport=${isFirstExport}, overhead=${overhead}, executionGasLimit=${gasLimitUsed}`
   );
 
   return {
@@ -210,6 +227,7 @@ export async function quotePC20Export(
     protocolFee,
     gasPrice,
     chainNamespace,
+    requestGasLimit,
     gasLimitUsed,
     isFirstExport,
     gasLimitCeiling,
@@ -234,6 +252,7 @@ export async function queryPC20OutboundGasFee(
   gasFee: bigint;
   protocolFee: bigint;
   gasPrice: bigint;
+  requestGasLimit: bigint;
   gasLimitUsed: bigint;
   universalCoreAddress: `0x${string}`;
   isFirstExport: boolean;
@@ -258,6 +277,7 @@ export async function queryPC20OutboundGasFee(
     gasFee: quote.gasFee,
     protocolFee: quote.protocolFee,
     gasPrice: quote.gasPrice,
+    requestGasLimit: quote.requestGasLimit,
     gasLimitUsed: quote.gasLimitUsed,
     universalCoreAddress,
     isFirstExport: quote.isFirstExport,

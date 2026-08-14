@@ -2,13 +2,21 @@ import { decodeAbiParameters, size, slice } from 'viem';
 import {
   buildPC20ExportPayload,
   assertMetadataFitsFactoryLimits,
+  quotePC20Export,
   PC20_SELECTOR,
   MAX_PC20_NAME_BYTES,
   MAX_PC20_SYMBOL_BYTES,
 } from '../export';
 import { InvalidPC20MetadataError } from '../errors';
-import { CHAIN } from '../../../../constants/enums';
+import { CHAIN, PUSH_NETWORK } from '../../../../constants/enums';
 import { chainToNamespace } from '../chain-namespace';
+import { getUniversalCoreAddress } from '../resolver';
+import type { OrchestratorContext } from '../../context';
+
+jest.mock('../resolver', () => ({
+  ...jest.requireActual('../resolver'),
+  getUniversalCoreAddress: jest.fn(),
+}));
 
 const DEST = CHAIN.ETHEREUM_SEPOLIA;
 
@@ -114,5 +122,97 @@ describe('PC20 metadata factory limits', () => {
     // If the contract changes these, this test must be updated deliberately.
     expect(MAX_PC20_NAME_BYTES).toBe(64);
     expect(MAX_PC20_SYMBOL_BYTES).toBe(32);
+  });
+});
+
+describe('PC20 export gas quote', () => {
+  it('re-quotes and returns a destination gas limit that includes wrapper deployment', async () => {
+    const core = '0xcccccccccccccccccccccccccccccccccccccccc' as const;
+    const token = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
+    const gasToken = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as const;
+    const baseGasLimit = BigInt(1_000_000);
+    const deploymentOverhead = BigInt(500_000);
+    const gasPrice = BigInt(2);
+    const namespace = chainToNamespace(DEST);
+
+    (getUniversalCoreAddress as jest.Mock).mockResolvedValue(core);
+    const readContract = jest.fn(async ({ functionName, args }) => {
+      if (functionName === 'pc20DeploymentGasOverhead') return deploymentOverhead;
+      if (functionName === 'getPC20ExportGasAndFees') {
+        const requested = (args as [string, bigint, string])[1];
+        const used = requested === BigInt(0)
+          ? baseGasLimit
+          : requested + deploymentOverhead;
+        return [gasToken, used * gasPrice, BigInt(7), gasPrice, namespace, used, true];
+      }
+      throw new Error(`Unexpected read: ${functionName}`);
+    });
+    const ctx = {
+      pushNetwork: PUSH_NETWORK.TESTNET_DONUT,
+      rpcUrls: {},
+      pushClient: { readContract },
+      printTraces: false,
+    } as unknown as OrchestratorContext;
+
+    const quote = await quotePC20Export(ctx, token, DEST, BigInt(0), {
+      network: PUSH_NETWORK.TESTNET_DONUT,
+    });
+
+    expect(quote.requestGasLimit).toBe(BigInt(1_000_000));
+    expect(quote.gasLimitUsed).toBe(BigInt(1_500_000));
+    expect(quote.gasLimitCeiling).toBe(BigInt(1_500_000));
+    expect(quote.gasFee).toBe(BigInt(3_000_000));
+    expect(readContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        functionName: 'getPC20ExportGasAndFees',
+        args: [namespace, BigInt(1_000_000), token],
+      })
+    );
+  });
+
+  it('leaves Solana requoting to the rent and compute-budget path', async () => {
+    const core = '0xcccccccccccccccccccccccccccccccccccccccc' as const;
+    const token = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
+    const gasToken = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as const;
+    const namespace = chainToNamespace(CHAIN.SOLANA_DEVNET);
+
+    (getUniversalCoreAddress as jest.Mock).mockResolvedValue(core);
+    const readContract = jest.fn(async ({ functionName }) => {
+      if (functionName === 'pc20DeploymentGasOverhead') return BigInt(500_000);
+      if (functionName === 'getPC20ExportGasAndFees') {
+        return [
+          gasToken,
+          BigInt(100),
+          BigInt(7),
+          BigInt(2),
+          namespace,
+          BigInt(1_000_000),
+          true,
+        ];
+      }
+      throw new Error(`Unexpected read: ${functionName}`);
+    });
+    const ctx = {
+      pushNetwork: PUSH_NETWORK.TESTNET_DONUT,
+      rpcUrls: {},
+      pushClient: { readContract },
+      printTraces: false,
+    } as unknown as OrchestratorContext;
+
+    const quote = await quotePC20Export(
+      ctx,
+      token,
+      CHAIN.SOLANA_DEVNET,
+      BigInt(0),
+      { network: PUSH_NETWORK.TESTNET_DONUT }
+    );
+
+    expect(quote.requestGasLimit).toBe(BigInt(0));
+    expect(quote.gasLimitUsed).toBe(BigInt(1_000_000));
+    expect(
+      readContract.mock.calls.filter(
+        ([request]) => request.functionName === 'getPC20ExportGasAndFees'
+      )
+    ).toHaveLength(1);
   });
 });

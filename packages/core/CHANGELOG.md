@@ -47,6 +47,10 @@
   account as the gateway recipient instead of the zero address, preventing the
   forwarded funds leg from attempting to credit `address(0)`.
 
+- Fixed first PC20 wrapper deployments running out of gas on the destination.
+  The SDK now re-quotes UGPC with the resolved deployment-aware limit and writes
+  the corresponding explicit limit into the outbound request.
+
 - Realigned inbound protobuf fields with the chain, exposed PC20 inbound
   metadata, and added SVM remaining-account support required by the Solana
   gateway.

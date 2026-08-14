@@ -5,21 +5,22 @@ import '@e2e/shared/setup';
  *
  *   1. R2 funds-only export  → mints into the sender's CEA ATA
  *   2. R2 delivery export    → TransferChecked CPI into the recipient ATA
- *   3. R3 CEA burn           → recovers the CEA ATA balance, unlocks on Push
+ *   3. R3 CEA burn           → parks its own balance, then recovers it on Push
  *   4. R1 direct burn        → burns from the wallet ATA, unlocks on Push
  *                              (rate-limit unblocked by the optional
  *                              token_rate_limit account, gateway commit
  *                              d5f6334; tolerates the known fee-credit bug on
  *                              the deposit leg)
  *
- * Order is load-bearing: (1) seeds the CEA ATA that (3) recovers, and (2)
- * seeds the wallet ATA that (4) burns — a full run conserves rain end to end.
+ * R3 seeds its own CEA ATA balance because CI may select that scenario without
+ * selecting R2. In a complete serial run, (2) still seeds the wallet ATA that
+ * (4) burns — the full run conserves rain end to end.
  *
  * The wrapper mint needs no env var — it derives from PC20_PUSH_TOKEN
  * (predictSvmWrapperMint), which is the same derivation settlement uses.
  */
 
-import { createWalletClient, createPublicClient, http, parseEther, formatEther } from 'viem';
+import { createWalletClient, createPublicClient, http, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   Connection,
@@ -119,7 +120,7 @@ d('PC20 SVM flows', () => {
   it('export to an ATA-less recipient parks in the CEA ATA', async () => {
     // A FRESH recipient guarantees no ATA exists, so this deterministically
     // exercises the park-in-CEA fallback (delivery is ATA-existence-driven,
-    // not caller-chosen). The parked balance seeds the R3 recovery test.
+    // not caller-chosen).
     const freshRecipient = Keypair.generate().publicKey;
     const before = { ceaAta: await ataBal(ceaAta), vault: await donutBal(VAULT_PC20) };
 
@@ -191,8 +192,25 @@ d('PC20 SVM flows', () => {
   });
 
   it('R3 burns the CEA ATA balance and unlocks on Push', async () => {
-    const parked = await ataBal(ceaAta);
-    expect(parked).toBeGreaterThan(BigInt(0)); // seeded by test 1
+    // This scenario is selected independently by the CI manifest. Seed exactly
+    // what it will burn instead of relying on the R2 test having run first or
+    // on residue from an earlier live run.
+    const parkedBefore = await ataBal(ceaAta);
+    const freshRecipient = Keypair.generate().publicKey;
+    const seed = await client.universal.sendTransaction({
+      to: { chain: CHAIN.SOLANA_DEVNET, address: freshRecipient.toBase58() },
+      funds: {
+        amount: AMOUNT,
+        token: {
+          chain: CHAIN.PUSH_TESTNET_DONUT,
+          address: fixtures!.pushToken,
+        },
+      },
+    });
+    await seed.wait();
+
+    const parked = await pollUntil(() => ataBal(ceaAta), parkedBefore + AMOUNT);
+    expect(parked - parkedBefore).toBe(AMOUNT);
 
     const before = { vault: await donutBal(VAULT_PC20), uea: await donutBal(ueaAddress) };
     const supplyBefore = BigInt((await devnet.getTokenSupply(mint)).value.amount);
@@ -201,7 +219,7 @@ d('PC20 SVM flows', () => {
       from: { chain: CHAIN.SOLANA_DEVNET },
       to: ueaAddress,
       funds: {
-        amount: parked,
+        amount: AMOUNT,
         token: {
           chain: CHAIN.SOLANA_DEVNET,
           address: mint.toBase58(),
@@ -213,10 +231,10 @@ d('PC20 SVM flows', () => {
     const after = { vault: await donutBal(VAULT_PC20), uea: await donutBal(ueaAddress) };
     const supplyAfter = BigInt((await devnet.getTokenSupply(mint)).value.amount);
 
-    expect(await ataBal(ceaAta)).toBe(BigInt(0));
-    expect(supplyBefore - supplyAfter).toBe(parked);
-    expect(before.vault - after.vault).toBe(parked);
-    expect(after.uea - before.uea).toBe(parked);
+    expect(await ataBal(ceaAta)).toBe(parkedBefore);
+    expect(supplyBefore - supplyAfter).toBe(AMOUNT);
+    expect(before.vault - after.vault).toBe(AMOUNT);
+    expect(after.uea - before.uea).toBe(AMOUNT);
   });
 
   // Unblocked by gateway commit d5f6334 (token_rate_limit is Optional; the

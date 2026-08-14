@@ -97,5 +97,9 @@ a remediation hint.
   funds inbound credits it directly — so the zero made the chain mint the
   prepaid gas to the zero address and revert, silently losing the deposit.
   Other flows keep the sentinel, which the protocol resolves for them.
+- First PC20 exports now re-quote the resolved gas limit and encode that same
+  explicit limit in the outbound request. This preserves the wrapper-deployment
+  margin through UGPC settlement instead of funding a higher fee while still
+  submitting the destination transaction with an under-gassed default limit.
 
 Existing `MoveableToken` PRC20 and native-token flows are unchanged.

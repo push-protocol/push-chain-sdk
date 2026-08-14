@@ -695,6 +695,7 @@ export async function executeUoaToCea(
   }
 
   const gasLimitForQuery = params.gasLimit ?? BigInt(0);
+  let outboundGasLimit = gasLimitForQuery;
 
   // --- 202: Gas estimation (spec-ordered before 203) ---
   let gasFee = BigInt(0);
@@ -708,9 +709,29 @@ export async function executeUoaToCea(
       // getPC20ExportGasAndFees accounts for the first-export deployment
       // overhead, and quoting the wrong one strands the destination transfer.
       const pc20Export = (params as { _pc20?: { direction: string } })._pc20;
-      const result = pc20Export?.direction === 'export'
-        ? await queryPC20OutboundGasFee(ctx, prc20Token, gasLimitForQuery, targetChain)
-        : await queryOutboundGasFee(ctx, prc20Token, gasLimitForQuery, targetChain);
+      const isPc20ExportQuote = pc20Export?.direction === 'export';
+      let result;
+      if (isPc20ExportQuote) {
+        const pc20Quote = await queryPC20OutboundGasFee(
+          ctx,
+          prc20Token,
+          gasLimitForQuery,
+          targetChain
+        );
+        result = pc20Quote;
+        // PC20 first exports deploy a wrapper on the destination. The quote is
+        // re-issued with that deployment margin, and the relayer must receive
+        // the corresponding explicit request limit—not the caller's original
+        // zero/default.
+        outboundGasLimit = pc20Quote.requestGasLimit;
+      } else {
+        result = await queryOutboundGasFee(
+          ctx,
+          prc20Token,
+          gasLimitForQuery,
+          targetChain
+        );
+      }
       gasFee = result.gasFee;
       protocolFee = result.protocolFee;
       gasToken = result.gasToken;
@@ -827,7 +848,7 @@ export async function executeUoaToCea(
     targetBytes,
     prc20Token,
     burnAmount,
-    gasLimitForQuery,
+    outboundGasLimit,
     outboundPayload,
     ueaAddress, // revert recipient is the UEA
     params.maxPCForGas ?? BigInt(0)
