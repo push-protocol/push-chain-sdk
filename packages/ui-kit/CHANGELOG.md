@@ -1,3 +1,9 @@
+@pushchain/ui-kit@6.0.22 (2026-08-14)
+
+- feat: add swap support and transaction lifecycle tracking
+
+---
+
 @pushchain/ui-kit@6.0.20 (2026-07-13)
 
 - feat: support EIP-7702 authorization signing
