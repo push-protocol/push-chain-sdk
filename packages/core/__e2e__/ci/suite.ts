@@ -406,7 +406,8 @@ export const SCENARIOS: Scenario[] = [
     group: 'svm-r2r3',
     file: F.svmR2,
     grep: '\\b2\\. Funds \\(SPL\\) should withdraw SPL token \\(pUSDT mapped\\) to Solana Devnet',
-    needs: { ueaPC: '2', ueaUsdtSol: '0.02' },
+    needs: { ueaPC: '2', ueaUsdtSol: '0.1' },
+    note: 'Moves a full 0.1 USDT, not dust — the spec hardcodes BigInt(100_000).',
   },
   {
     id: 'svm-r2-payload-cpi',
