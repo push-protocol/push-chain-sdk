@@ -1,0 +1,16 @@
+# Ignore social media profile links (they often block bots)
+https://twitter.com/*
+https://x.com/*
+https://linkedin.com/*
+https://facebook.com/*
+
+# Ignore localhost links
+http://localhost*
+http://127.0.0.1*
+
+# Ignore example/placeholder URLs
+https://example.com/*
+
+# Ignore any authentication-required URLs
+**/login
+**/signin

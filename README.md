@@ -45,7 +45,7 @@ Click on the packages to view more details.
 - **[Docs](https://push.org/docs)** For comprehensive documentation.
 - **[Blog](https://medium.com/push-protocol)** To learn more about our partners, new launches, etc.
 - **[Discord](https://discord.com/invite/pushchain)** for support and discussions with the community and the team.
-- **[GitHub](https://github.com/push-protocol)** for source code, project board, issues, and pull requests.
+- **[GitHub](https://github.com/pushchain)** for source code, project board, issues, and pull requests.
 - **[X/Twitter](https://x.com/pushchain)** for the latest updates on the product and published blogs.
 
 ## Contributing
@@ -56,7 +56,7 @@ Push Protocol is an open source Project. We firmly believe in a completely trans
 - Feature Request: Please submit a feature request if you have an idea or discover a capability that would make development simpler and more reliable.
 - Documentation Request: If you're reading the Push documentation and believe that we're missing something, please create a docs request.
 
-<!-- Read how you can contribute <a href="https://github.com/push-protocol/push-chain-sdk/blob/main/CONTRIBUTING.md
+<!-- Read how you can contribute <a href="https://github.com/pushchain/push-chain-sdk/blob/main/CONTRIBUTING.md
 ">HERE</a> -->
 
 Not sure where to start? Join our discord and we will help you get started!

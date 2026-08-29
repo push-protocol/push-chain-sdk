@@ -1,0 +1,64 @@
+name: Check Links
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '**.md'
+      - '**.mdx'
+      - 'docs/**'
+  push:
+    branches:
+      - main
+  schedule:
+    # Run weekly on Mondays at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+jobs:
+  check-links:
+    runs-on: ubuntu-latest
+    name: Check for broken links
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check links in Markdown files
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # Check all markdown files in the repository
+          args: |
+            --verbose
+            --no-progress
+            --max-retries 3
+            --timeout 20
+            --exclude-path node_modules
+            --exclude-path .git
+            --exclude-path build
+            --exclude-path dist
+            --exclude 'linkedin.com/in/*'
+            --exclude 'twitter.com/*'
+            --exclude 'x.com/*'
+            '**/*.md'
+            '**/*.mdx'
+          
+          # Fail action on broken links
+          fail: true
+          
+          # Output file for results
+          output: lychee-results.md
+          
+          # Format of the output
+          format: markdown
+
+      - name: Upload link check results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: link-check-results
+          path: lychee-results.md
+          retention-days: 30
