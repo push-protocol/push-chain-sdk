@@ -1130,6 +1130,13 @@ describe('Helpers Utils Namespace', () => {
           precision: 10,
         });
         expect(result5).toBe('1.5');
+
+        // Large values should not lose precision through JS number conversion
+        const result6 = PushChain.utils.helpers.formatUnits(
+          '123456789012345678901234567890',
+          { decimals: 18, precision: 6 }
+        );
+        expect(result6).toBe('123456789012.345678');
       });
 
       it('should handle edge cases with precision', () => {

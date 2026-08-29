@@ -546,12 +546,20 @@ export class Utils {
           formatted = formatted + '.0';
         }
 
-        // Apply precision if specified
+        // Apply precision if specified without converting through JS number,
+        // which would lose precision for large token values.
         if (precision !== undefined) {
-          const num = parseFloat(formatted);
-          const factor = Math.pow(10, precision);
-          const truncated = Math.floor(num * factor) / factor;
-          return truncated.toString();
+          if (precision === 0) {
+            return formatted.split('.')[0];
+          }
+
+          const [integerPart, fractionalPart = ''] = formatted.split('.');
+          const truncatedFraction = fractionalPart.slice(0, precision);
+          if (!truncatedFraction) {
+            return integerPart;
+          }
+
+          return `${integerPart}.${truncatedFraction.replace(/0+$/, '')}`;
         }
 
         return formatted;
