@@ -4,6 +4,7 @@ import styled, { css } from 'styled-components';
 import { CrossIcon, Spinner, TickIcon, WarningIcon } from '../../components/common';
 import CaretDown from '../common/icons/CaretDown';
 import CaretUp from '../common/icons/CaretUp';
+import ArrowUpRight from '../common/icons/ArrowUpRight';
 import { getUniversalTxId } from './trackTransaction';
 
 const TOAST_POSITION = {
@@ -134,7 +135,8 @@ const PushWalletToast: FC<PushWalletToastProps> = ({
 
                 {!isSuccess && !isFailure && trackedTx && (
                     <LinkText onClick={() => handleViewLifecycle(trackedTx)}>
-                        Track Live Progress <ExternalArrow aria-hidden="true">↗</ExternalArrow>
+                        Track Live Progress
+                        <ArrowUpRight height="14px" width="14px" color="#0056D0" />
                     </LinkText>
                 )}
 
@@ -163,7 +165,8 @@ const PushWalletToast: FC<PushWalletToastProps> = ({
 
                 {isFailure && trackedTx && (
                     <LinkText onClick={() => handleViewLifecycle(trackedTx)}>
-                        View Tx Lifecycle <ExternalArrow aria-hidden="true">↗</ExternalArrow>
+                        View Tx Lifecycle
+                        <ArrowUpRight height="14px" width="14px" color="#0056D0" />
                     </LinkText>
                 )}
             </ContentContainer>
@@ -297,17 +300,15 @@ const ExpandButton = styled.div`
 `;
 
 const LinkText = styled.span`
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 14px;
     font-weight: 400;
     line-height: 18px;
     cursor: pointer;
     color: #0056D0;
     font-family: var(--pw-int-font-family);
-`;
-
-const ExternalArrow = styled.span`
-    display: inline-block;
-    margin-left: 4px;
 `;
 
 const IconContainer = styled.div`

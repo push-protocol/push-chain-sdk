@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePushWalletContext } from '../../hooks/usePushWallet';
 import { PushUI } from '../../constants';
 
@@ -12,6 +12,7 @@ export function useSmartModalPosition(
   uid?: string,
 ): Position {
   const [position, setPosition] = useState<Position>({ top: 0, left: 0 });
+  const rafRef = useRef<number | null>(null);
 
   const { isWalletMinimised, universalAccount, config } = usePushWalletContext(uid);
 
@@ -52,10 +53,25 @@ export function useSmartModalPosition(
       } else if (spaceLeft >= modalWidth) {
         left = triggerRect.right - modalWidth + 35;
       } else {
-        left = Math.max(viewportWidth - modalWidth, 0) / 2;
+        // Not enough room on either side of the trigger (e.g. viewport was
+        // narrowed by a docked browser side panel). Clamp to the trigger's
+        // edge instead of centering in the viewport, so the modal stays
+        // visually attached to the button rather than jumping away from it.
+        left = Math.min(
+          Math.max(triggerRect.left - 35, 8),
+          Math.max(viewportWidth - modalWidth - 8, 8),
+        );
       }
 
       setPosition({ top, left });
+    };
+
+    const scheduleCalculatePosition = () => {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        calculatePosition();
+      });
     };
 
     if (!isWalletMinimised && universalAccount) {
@@ -65,9 +81,19 @@ export function useSmartModalPosition(
     }
 
     calculatePosition();
-    window.addEventListener('resize', calculatePosition);
+    window.addEventListener('resize', scheduleCalculatePosition);
+
+    const triggerEl = triggerId ? triggerRefs.current[triggerId] : null;
+    let resizeObserver: ResizeObserver | undefined;
+    if (triggerEl && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(scheduleCalculatePosition);
+      resizeObserver.observe(triggerEl);
+    }
+
     return () => {
-      window.removeEventListener('resize', calculatePosition);
+      window.removeEventListener('resize', scheduleCalculatePosition);
+      resizeObserver?.disconnect();
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       document.body.style.overflow = '';
     };
   }, [triggerId, triggerRefs, modalWidth, modalHeight, isWalletMinimised, config, uid]);
