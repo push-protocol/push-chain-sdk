@@ -143,18 +143,18 @@ export class MetamaskProvider extends BaseWalletProvider {
       const hex = bytesToHex(txn);
       const parsed = parseTransaction(hex);
 
+      // Deliberately omit gas / maxFeePerGas / maxPriorityFeePerGas: those
+      // were estimated by Core against its own RPC, which can disagree with
+      // (or go stale relative to) whatever RPC MetaMask itself broadcasts
+      // through, causing spurious -32003 "Transaction rejected" errors after
+      // the user has already approved. Letting MetaMask estimate gas/fees
+      // itself, against its own RPC, right before it broadcasts, avoids that
+      // estimate-vs-broadcast mismatch entirely.
       const txParams = {
         from: accounts[0],
         to: parsed.to,
         value: parsed.value ? '0x' + parsed.value.toString(16) : undefined,
         data: parsed.data,
-        gas: parsed.gas ? '0x' + parsed.gas.toString(16) : undefined,
-        maxPriorityFeePerGas: parsed.maxPriorityFeePerGas
-          ? '0x' + parsed.maxPriorityFeePerGas.toString(16)
-          : undefined,
-        maxFeePerGas: parsed.maxFeePerGas
-          ? '0x' + parsed.maxFeePerGas.toString(16)
-          : undefined,
       };
 
       const signature = await provider.request({
