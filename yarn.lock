@@ -4223,7 +4223,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@pushchain/core@npm:^6.0.22, @pushchain/core@workspace:packages/core":
+"@pushchain/core@npm:^6.0.24, @pushchain/core@workspace:packages/core":
   version: 0.0.0-use.local
   resolution: "@pushchain/core@workspace:packages/core"
   dependencies:
@@ -4265,7 +4265,7 @@ __metadata:
     "@coral-xyz/anchor": "npm:^0.31.1"
     "@human.tech/waap-sdk": "npm:^1.3.0"
     "@metamask/sdk": "npm:^0.32.0"
-    "@pushchain/core": "npm:^6.0.22"
+    "@pushchain/core": "npm:^6.0.24"
     "@solana/web3.js": "npm:^1.98.2"
     "@types/react": "npm:^18.3.13"
     "@types/react-is": "npm:^19"
