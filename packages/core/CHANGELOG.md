@@ -63,6 +63,16 @@
   metadata, and added SVM remaining-account support required by the Solana
   gateway.
 
+- Fixed EVM PC20 wrapper burns destroying the wrapper without unlocking the
+  canonical token. A payload-less burn took the funds-only path, whose empty
+  payload gains the gateway's PC20 selector and then fails the chain's inbound
+  decode at ballot finalization — no handler runs, no revert is produced, and
+  the already-burned wrapper leaves the canonical token locked in VaultPC20.
+  The always-forward mitigation was gated to Solana; PC20 imports now route
+  through the payload path on both VMs, and `executeFundsOnly` fails closed
+  with `PC20UnsafeEmptyPayloadError` if a PC20 import ever reaches it again.
+  PRC20 and native funds-only flows are unchanged.
+
 ---
 
 @pushchain/core@6.0.20 (2026-07-10)
