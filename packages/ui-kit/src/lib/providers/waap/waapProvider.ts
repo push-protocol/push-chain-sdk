@@ -168,18 +168,19 @@ export const waapSignAndSendTransaction = async (
 	const hex = bytesToHex(txn);
 	const parsed = parseTransaction(hex);
 
+	// Deliberately omit gas / maxFeePerGas / maxPriorityFeePerGas: those were
+	// estimated by Core against its own RPC, which can disagree with (or go
+	// stale relative to) whatever RPC the WAAP provider itself broadcasts
+	// through, causing spurious -32003 "Transaction rejected" errors after
+	// the user has already approved. Letting the provider estimate gas/fees
+	// itself, right before it broadcasts, avoids that estimate-vs-broadcast
+	// mismatch entirely. (See the same fix applied to the injected-wallet
+	// adapters in ../walletProviders/ethereum/.)
 	const txParams = {
 		from: accounts[0],
 		to: parsed.to,
 		value: parsed.value ? "0x" + parsed.value.toString(16) : undefined,
 		data: parsed.data,
-		gas: parsed.gas ? "0x" + parsed.gas.toString(16) : undefined,
-		maxPriorityFeePerGas: parsed.maxPriorityFeePerGas
-			? "0x" + parsed.maxPriorityFeePerGas.toString(16)
-			: undefined,
-		maxFeePerGas: parsed.maxFeePerGas
-			? "0x" + parsed.maxFeePerGas.toString(16)
-			: undefined,
 	};
 
 	const res = await provider.request({
