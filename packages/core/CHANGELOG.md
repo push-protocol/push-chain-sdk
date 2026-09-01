@@ -1,3 +1,10 @@
+@pushchain/core@6.0.23 (2026-09-01)
+
+- docs: changelog entry for the EVM PC20 burn routing fix
+- fix: route EVM PC20 imports through the payload path
+
+---
+
 @pushchain/core@6.0.22 (2026-08-14)
 
 - fix: make PC20 first exports and Solana R3 E2E reliable
