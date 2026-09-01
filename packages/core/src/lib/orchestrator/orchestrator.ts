@@ -375,8 +375,8 @@ export class Orchestrator {
           // Single PC20 gate. Downstream builders only ever see the legacy
           // PRC20/native shape; the PC20 branch is added here in Phase 2.
           const legacy = await gateFunds(this.ctx, execute);
-          // SVM PC20 imports never take the raw funds-only path: the Solana
-          // gateway prepends the PC20 selector to the (empty) payload and
+          // PC20 imports never take the raw funds-only path, on EITHER VM.
+          // The gateway prepends the PC20 selector to the (empty) payload and
           // classifies the RESULT as FUNDS_AND_PAYLOAD, and the chain's
           // inbound decode hard-fails on that selector-only payload with no
           // revert — the wrapper is already burned (same "0x" vs "" guard as
@@ -384,11 +384,19 @@ export class Orchestrator {
           // payload (UEA multicall transfer to `to`), which classifies and
           // decodes legitimately — the same always-forward mitigation R3
           // ships on both VMs.
-          const svmPc20Import =
-            legacy._pc20?.direction === 'import' &&
-            CHAIN_INFO[this.ctx.universalSigner.account.chain].vm === VM.SVM;
+          //
+          // This was previously gated on VM.SVM, which left EVM wrapper burns
+          // on the unsafe path: observed on Donut as a burned wrapper whose
+          // canonical token was never unlocked. The brick is at ballot
+          // finalization — NormalizeForTxType (x/uexecutor/types/inbound.go)
+          // strips the selector, gets '0x', which passes its `!= ""` empty
+          // check, and DecodeRawPayload('0x') then fails — so no handler runs
+          // at all: no deploy, no credit, and no INBOUND_REVERT. With a real
+          // forward payload the decode succeeds and the funds_and_payload
+          // handler deploys the UEA and credits normally.
+          const pc20Import = legacy._pc20?.direction === 'import';
           return attachPerCallHookForWait(
-            !hasData && !svmPc20Import
+            !hasData && !pc20Import
               ? await _executeFundsOnly(this.ctx, legacy, eventBuffer, rcb)
               : await _executeFundsWithPayload(this.ctx, legacy, eventBuffer, rcb)
           );

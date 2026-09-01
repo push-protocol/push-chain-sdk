@@ -42,6 +42,7 @@ import { queryUniversalTxStatusFromGatewayTx } from './response-builder';
 import { extractPcTxAndTransform, PushChainExecutionError } from './push-chain-tx';
 import { buildSvmUniversalTxRequest, getSvmProtocolFee } from './svm-helpers';
 import { buildPC20BurnAccounts } from './pc20/svm';
+import { assertPC20ImportHasPayload } from './pc20/gate';
 import { fetchOriginChainTransactionForProgress } from './helpers';
 import type { ResponseBuilderCallbacks } from './response-builder';
 import { transformToUniversalTxResponse } from './response-builder';
@@ -55,6 +56,14 @@ export async function executeFundsOnly(
 ): Promise<UniversalTxResponse> {
   const transformFn = (tx: TxResponse, buf: ProgressEvent[] = []) =>
     transformToUniversalTxResponse(ctx, tx, buf, getResponseCallbacks());
+
+  // Fail closed: a PC20 wrapper burn must never be broadcast from this path.
+  // It sends an empty payload, the gateway prepends the PC20 selector, and the
+  // chain's inbound decode hard-fails on the selector-only result with no
+  // revert — burning the wrapper and locking the canonical token forever.
+  // The orchestrator routes PC20 imports to the payload path; this is the
+  // backstop for any caller that reaches here anyway.
+  assertPC20ImportHasPayload(execute, false, 'executeFundsOnly');
 
   const chain = ctx.universalSigner.account.chain;
   const { vm } = CHAIN_INFO[chain];
